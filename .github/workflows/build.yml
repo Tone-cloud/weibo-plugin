@@ -135,6 +135,24 @@ jobs:
           echo "=== make done ==="
           ls -lh build/
 
+      - name: Dereference version suffix and strip
+        run: |
+          set -euo pipefail
+          # qmake 默认会给共享库加 1.0.0 版本后缀，产出
+          #   build/libweibo_plugin.so -> libweibo_plugin.so.1.0.0
+          # 插件目录里要的是一个普通文件，所以这里先解引用软链再 strip，
+          # 后面的 ABI 校验 / 上传都作用在真实文件上。
+          echo "=== qmake 刚产出时 ==="
+          ls -lh build/
+          cp -L build/libweibo_plugin.so build/libweibo_plugin.plain.so
+          rm -f build/libweibo_plugin.so build/libweibo_plugin.so.1 \
+                build/libweibo_plugin.so.1.0 build/libweibo_plugin.so.1.0.0
+          mv build/libweibo_plugin.plain.so build/libweibo_plugin.so
+          aarch64-dictpen-linux-gnu-strip --strip-unneeded build/libweibo_plugin.so
+          echo "=== 解引用 + strip 之后 ==="
+          ls -lh build/libweibo_plugin.so
+          file build/libweibo_plugin.so
+
       - name: Verify exported plugin ABI
         run: |
           set -euo pipefail
@@ -159,23 +177,6 @@ jobs:
           done
           echo "=== qml entry present in package? ==="
           test -f qml/main.qml && echo "qml/main.qml OK"
-
-      - name: Dereference version suffix and strip
-        run: |
-          set -euo pipefail
-          # qmake 默认会给共享库加 1.0.0 版本后缀，产出
-          #   libweibo_plugin.so -> libweibo_plugin.so.1.0.0
-          # 插件目录里要的是一个普通文件，所以这里解引用软链再 strip，
-          # 顺便把 nm/strip 都作用在真实文件上。
-          ls -lh build/
-          cp -L build/libweibo_plugin.so build/libweibo_plugin.plain.so
-          rm -f build/libweibo_plugin.so build/libweibo_plugin.so.1 \
-                build/libweibo_plugin.so.1.0 build/libweibo_plugin.so.1.0.0
-          mv build/libweibo_plugin.plain.so build/libweibo_plugin.so
-          aarch64-dictpen-linux-gnu-strip --strip-unneeded build/libweibo_plugin.so
-          echo "=== 解引用 + strip 之后 ==="
-          ls -lh build/libweibo_plugin.so
-          file build/libweibo_plugin.so
 
       - name: Upload libweibo_plugin.so
         uses: actions/upload-artifact@v4
