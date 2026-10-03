@@ -1089,7 +1089,8 @@ def main() -> int:
         return 1
     if STRICT and warnings:
         return 1
-    print("结构校验通过 ✅（注意：这不能替代真正的编译）")
+    # 注意：不要在这里用 emoji（Windows 控制台可能是 GBK，会 UnicodeEncodeError）
+    print("结构校验通过 [PASS] —— 注意：这不能替代真正的编译")
     return 0
 
 

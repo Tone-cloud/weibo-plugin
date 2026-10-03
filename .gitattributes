@@ -1,0 +1,18 @@
+# 统一换行符：仓库内容一律 LF。
+# 交叉编译在 Linux 上跑，shell 脚本（package.sh / go_server/build.sh）一旦被
+# checkout 成 CRLF，在设备/CI 上会报 "bad interpreter: /bin/bash^M"。
+* text=auto eol=lf
+
+# Windows 专用脚本保留 CRLF 更符合习惯
+*.ps1 text eol=crlf
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# 二进制产物不要做任何转换
+*.png binary
+*.jpg binary
+*.ttf binary
+*.ttc binary
+*.otf binary
+*.so  binary
+*.zip binary
