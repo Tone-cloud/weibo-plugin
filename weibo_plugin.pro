@@ -22,6 +22,11 @@ DESTDIR     = $$PWD/build
 OBJECTS_DIR = $$PWD/build/obj
 MOC_DIR     = $$PWD/build/moc
 
+# 注意：qmake 会给共享库补上 VERSION（默认 1.0.0），实际产出是
+#   build/libweibo_plugin.so -> libweibo_plugin.so.1.0.0   （软链 + 真实文件）
+# 插件目录里只需要一个普通文件，所以 CI 在 strip 之前用 `cp -L` 解引用软链，
+# 再删掉带版本号的文件（见 .github/workflows/build.yml 的 Dereference 步骤）。
+
 SOURCES += \
     src/WeiboController.cpp \
     src/WeiboModels.cpp \
