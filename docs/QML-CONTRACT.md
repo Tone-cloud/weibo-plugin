@@ -207,7 +207,7 @@ isSuper level exp rank checked signedDays type statusText
 | `Avatar` | `source`(string, 原始 URL) `avatarSize`(int=20) `verified`(bool) `verifiedType`(int=-1) `online`(bool=false) | `clicked()` |
 | `TabBar` | `tabs`(var, `[{text, badge}]`) `currentIndex`(int) `tabHeight`(int=24) | `tabClicked(index)` |
 | `BlogCard` | `blog`(var, 见下) `compact`(bool=false) `showActions`(bool=true) `selected`(bool=false) | `clicked()` `authorClicked(uid)` `likeClicked()` `commentClicked()` `repostClicked()` `favoriteClicked()` `mediaClicked()` `imageClicked(index)` `topicClicked(name)` `linkClicked(url)` `retweetClicked(id)` |
-| `RichTextLabel` | `text`(string) `color`(color) `fontSize`(int) `maximumLines`(int=0) `linkColor`(color) `topicColor`(color) | `userClicked(name)` `topicClicked(name)` `linkClicked(url)` |
+| `RichTextLabel` | `sourceText`(string) `color`(color) `fontSize`(int) `maximumLines`(int=0) `linkTextColor`(color) `topicTextColor`(color) | `userClicked(name)` `topicClicked(name)` `linkClicked(url)` |
 | `UserRow` | `uid`(var) `name` `avatar` `verified`(bool) `verifiedType`(int) `description` `followersText` `isFollowing`(bool) `showFollow`(bool=true) | `clicked(uid)` `followClicked(uid, follow)` |
 | `CommentRow` | `cid` `userName` `userAvatar` `userVerified`(bool) `text` `createdText` `likeCount`(int) `liked`(bool) `replyTo` `replyCount`(int) `pics`(var) `canDelete`(bool) `isReply`(bool=false) | `userClicked(uid)` `replyClicked(cid, name)` `likeClicked(cid, liked)` `deleteClicked(cid)` `imageClicked(index)` `repliesClicked(cid)` |
 | `HotRow` | `rank`(int) `word` `rawHot`(var) `hotText` `label` `showRank`(bool=true) | `clicked(word)` |

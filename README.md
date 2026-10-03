@@ -410,10 +410,14 @@ cd go_server/main && CGO_ENABLED=0 go build -o ../../server_host . && cd ../..
 python3 tools/test_autoimport.py
 ```
 
-`verify.py` 检查 20 类问题：metadata ↔ 打包布局、`weibo_plugin.pro` ↔ 源文件、
+`verify.py` 检查 22 类问题：metadata ↔ 打包布局、`weibo_plugin.pro` ↔ 源文件、
 `components/qmldir` ↔ 实际组件文件、QML 括号与根元素、每个页面有 `controller`、
 每个用到 `Theme`/组件的页面有正确的 import、QML 相对路径（import / `source:`）
-能解析到真实文件、C++ 头文件声明的函数在 `.cpp` 里都有定义、
+能解析到真实文件、**根对象里同一个属性被赋值/声明两次**（真机报
+`Property value set multiple times`，会让整条引用链 `Type X unavailable`）、
+**实例化组件时赋的属性必须真的存在**（真机报
+`Cannot assign to non-existent property`）、中文字体是真 TrueType、
+C++ 头文件声明的函数在 `.cpp` 里都有定义、
 头文件声明与 `.cpp` 定义的参数个数 / `const` 一致、重复定义（链接错误）、
 每个 `Q_INVOKABLE` / `Q_PROPERTY READ` 都有定义、QML 里
 `controller.<模块>.<方法>()` 调用 ↔ 头文件对账、`model.<角色>` ↔ `roleNames()`、

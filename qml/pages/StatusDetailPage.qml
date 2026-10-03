@@ -421,7 +421,7 @@ Rectangle {
             // ── 正文 ──
             Components.RichTextLabel {
                 width: parent.width - Theme.spacingMedium
-                text: detailPage.bodyText()
+                sourceText: detailPage.bodyText()
                 color: Theme.textPrimary
                 fontSize: Theme.fontBody
                 maximumLines: 0
@@ -514,7 +514,7 @@ Rectangle {
 
                     Components.RichTextLabel {
                         width: parent.width
-                        text: detailPage.retweetedText()
+                        sourceText: detailPage.retweetedText()
                         color: Theme.textSecondary
                         fontSize: Theme.fontSmall
                         maximumLines: 4

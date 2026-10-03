@@ -1033,6 +1033,348 @@ def check_font() -> None:
         log_ok(f"U: 中文字体 qml/fonts/msyh.ttf 正常（{len(raw) // 1024} KB，{num_tables} 张表）")
 
 
+# 常见根元素的内建属性。在 QML 里对**根对象**重复声明同名的 property，
+# 或者给同一个属性赋两次值，Qt 会报
+#   "<file>:<line> Property <name> set multiple times"
+# 而且这个组件会直接变成 "unavailable"，整条加载链一起失败 ——
+# 真机上表现为「插件点开就报 Type Pages.HomePage unavailable」。
+# 这类错误 verify.py 早期完全查不出来（编译器/打包都过），所以单列一项。
+QT_BUILTIN_BY_ROOT: dict[str, set[str]] = {
+    "Text": {
+        "text", "color", "font", "elide", "wrapMode", "maximumLineCount",
+        "textFormat", "lineHeight", "horizontalAlignment", "verticalAlignment",
+        "style", "styleColor", "linkColor", "readOnly", "selectionColor",
+        "selectedTextColor", "cursorVisible", "renderType", "baseUrl",
+    },
+    "TextEdit": {
+        "text", "color", "font", "elide", "wrapMode", "textFormat",
+        "horizontalAlignment", "verticalAlignment", "readOnly", "selectByMouse",
+        "selectedTextColor", "selectionColor", "cursorVisible", "renderType",
+        "persistentSelection", "textMargin",
+    },
+    "TextInput": {
+        "text", "color", "font", "echoMode", "validator", "inputMask",
+        "horizontalAlignment", "verticalAlignment", "readOnly", "passwordCharacter",
+        "acceptableInput", "cursorVisible", "selectionColor", "selectedTextColor",
+    },
+    "Item": {
+        "width", "height", "x", "y", "z", "opacity", "visible", "enabled",
+        "rotation", "scale", "clip", "parent", "anchors", "children", "transform",
+        "state", "states", "transitions", "layer", "implicitWidth", "implicitHeight",
+        "focus", "activeFocus", "smooth", "antialiasing", "baselineOffset",
+    },
+    "Rectangle": {
+        "color", "radius", "border", "gradient", "antialiasing", "topLeftRadius",
+        "topRightRadius", "bottomLeftRadius", "bottomRightRadius",
+    },
+    "Image": {
+        "source", "fillMode", "sourceSize", "status", "progress", "asynchronous",
+        "cache", "mirrored", "paintedWidth", "paintedHeight", "mipmap",
+        "horizontalAlignment", "verticalAlignment",
+    },
+    "MouseArea": {
+        "acceptedButtons", "pressed", "containsMouse", "hoverEnabled",
+        "propagateComposedEvents", "pressAndHoldInterval", "cursorShape", "enabled",
+        "preventStealing", "drag", "onClicked", "onPressed", "onReleased",
+    },
+    "ListView": {
+        "model", "delegate", "spacing", "orientation", "currentIndex", "contentY",
+        "contentX", "count", "header", "footer", "highlight", "cacheBuffer",
+        "snapMode", "boundsBehavior", "interactive", "flickDeceleration",
+        "highlightFollowsCurrentItem", "highlightMoveDuration", "keyNavigationWraps",
+    },
+    "Flickable": {
+        "contentWidth", "contentHeight", "contentX", "contentY", "interactive",
+        "boundsBehavior", "flickableDirection", "pressDelay", "pixelAligned",
+        "topMargin", "bottomMargin", "leftMargin", "rightMargin", "atXBeginning",
+        "atYBeginning", "atXEnd", "atYEnd",
+    },
+    "Column": {"spacing", "layoutDirection", "padding", "topPadding", "bottomPadding"},
+    "Row": {"spacing", "layoutDirection", "padding", "leftPadding", "rightPadding"},
+    "Grid": {
+        "spacing", "rows", "columns", "rowSpacing", "columnSpacing",
+        "flow", "layoutDirection",
+    },
+    "Loader": {"source", "sourceComponent", "item", "active", "asynchronous", "progress", "status"},
+}
+
+_STR_LITERAL_RE = re.compile(r'"(?:[^"\\]|\\.)*"')
+
+
+def _root_object_property_uses(src: str) -> tuple[str, list[tuple[int, str, str]]]:
+    """返回 (根元素类型, [(行号, 属性名, 原始行)]) —— 只统计根对象**自己那一层**。
+
+    做法：按大括号深度走一遍，只收集深度为 1 的行；行内的字符串字面量先去掉，
+    免得 `text: "{"` 这类内容把深度算错。
+    """
+    root_type = ""
+    uses: list[tuple[int, str, str]] = []
+    depth = 0
+    in_block_comment = False
+    for lineno, raw_line in enumerate(src.split("\n"), 1):
+        line = raw_line
+        # 简化处理块注释（QML 里很少出现，但错了会误报）
+        if in_block_comment:
+            if "*/" in line:
+                line = line.split("*/", 1)[1]
+                in_block_comment = False
+            else:
+                continue
+        if "/*" in line and "*/" not in line:
+            line = line.split("/*", 1)[0]
+            in_block_comment = True
+        elif "/*" in line:
+            line = re.sub(r"/\*.*?\*/", "", line)
+        stripped = line.strip()
+        if stripped.startswith("//"):
+            continue
+        line = _STR_LITERAL_RE.sub('""', line)
+        was_depth = depth
+        depth += line.count("{") - line.count("}")
+        if was_depth == 0 and not root_type:
+            # 根元素：第一个带 { 的类型名
+            m = re.match(r"^\s*([A-Z][\w.]*)\s*(?:\{|\s*$)", line)
+            if m and "{" in line:
+                root_type = m.group(1)
+            elif m:
+                root_type = m.group(1)
+        if was_depth != 1:
+            continue
+        # 同一层里的属性声明与赋值
+        m_decl = re.match(r"^\s*(?:readonly\s+|default\s+)?property\s+[\w.<>]+\s+(\w+)\s*:", line)
+        if m_decl:
+            uses.append((lineno, m_decl.group(1), stripped))
+            continue
+        m_assign = re.match(r"^\s*([A-Za-z_][\w.]*)\s*:", line)
+        if m_assign:
+            name = m_assign.group(1)
+            # id / signal / function / onXxx 都不是普通属性赋值
+            if name == "id" or name.startswith("on") or name in ("signal", "function"):
+                continue
+            uses.append((lineno, name, stripped))
+    return root_type, uses
+
+
+def check_qml_duplicate_properties() -> None:
+    """根对象里同一个属性被声明/赋值多次，或重复声明内建属性。
+
+    真机踩过：`RichTextLabel.qml` 根元素是 Text，却又写了
+    `property string text: ""` 并在下面 `text: displayText`，
+    词典笔直接报
+      PluginManager component error: main.qml:224 Type Pages.HomePage unavailable
+      HomePage.qml:214 Type Components.BlogCard unavailable
+      BlogCard.qml:233 Type RichTextLabel unavailable
+      RichTextLabel.qml:45 Property value set multiple times
+    一个组件的属性错误会让整条引用链全部 unavailable，所以必须静态拦住。
+    """
+    qml_root = os.path.join(ROOT, "qml")
+    for dirpath, _dirs, files in os.walk(qml_root):
+        for name in files:
+            if not name.endswith(".qml"):
+                continue
+            full = os.path.join(dirpath, name)
+            src = read(full)
+            root_type, uses = _root_object_property_uses(src)
+            seen: dict[str, int] = {}
+            for lineno, prop, raw in uses:
+                # 分组属性必须按**完整名字**比较：font.pixelSize 与 font.family
+                # 是两个不同属性，各自赋一次是合法的。
+                if prop in seen:
+                    err(
+                        f"V: {rel(full)}:{lineno} 属性 {prop} 在根对象里出现了两次"
+                        f"（第 {seen[prop]} 行已经用过）—— Qt 会报 "
+                        f"'Property {prop} set multiple times'，组件直接 unavailable"
+                    )
+                else:
+                    seen[prop] = lineno
+            builtins = QT_BUILTIN_BY_ROOT.get(root_type.split(".")[-1], set())
+            for lineno, prop, raw in uses:
+                if prop in builtins and re.match(
+                    r"^\s*(?:readonly\s+|default\s+)?property\s", raw
+                ):
+                    err(
+                        f"V: {rel(full)}:{lineno} 根元素是 {root_type}，不能重新声明它的内建属性 "
+                        f"{prop} —— 换个属性名（例如 sourceText），把 {prop} 留作渲染输出"
+                    )
+
+
+def check_component_props() -> None:
+    """实例化本地组件时赋的属性，必须真的存在于该组件上。
+
+    对应运行期错误 `Cannot assign to non-existent property "xxx"`。
+    真机上这类错误同样会让组件 unavailable、整条引用链失效 ——
+    给 RichTextLabel 的输入属性改名（text → sourceText）时，
+    任何一个调用点漏改都会以此形式爆炸，所以必须静态对账。
+
+    属性来源 = 组件自己声明的 property
+             ∪ 根元素类型的内建属性（含继承链，如 Text → Item）
+             ∪ 声明的 signal（onXxx）
+             ∪ 附属属性（Component.onCompleted / Keys.onPressed …）
+    """
+    components = _local_components()          # 组件名 -> 文件路径
+    declared = {name: _declared_props(path) for name, path in components.items()}
+
+    def effective(name: str, seen: set[str] | None = None) -> set[str] | None:
+        """组件的全部可赋值属性；未知类型返回 None 表示「无法判断，不报」。"""
+        seen = seen or set()
+        if name in seen:
+            return set()
+        seen.add(name)
+        if name in declared:
+            path = components[name]
+            own, root = declared[name]
+            base = effective(root, seen)
+            if base is None:
+                return None            # 根类型不认识，放弃这个组件的检查
+            return own | base
+        return QT_EFFECTIVE_BUILTINS.get(name)
+
+    local_names = set(components)
+    for dirpath, _dirs, files in os.walk(os.path.join(ROOT, "qml")):
+        for fname in files:
+            if not fname.endswith(".qml"):
+                continue
+            full = os.path.join(dirpath, fname)
+            src = read(full)
+            for type_name, line, props in _object_blocks(src):
+                target = type_name.split(".")[-1]
+                if target not in local_names:
+                    continue           # 只管本地组件；Qt 内建类型不在这一项范围内
+                allowed = effective(target)
+                if allowed is None:
+                    continue
+                for pline, prop, raw in props:
+                    base = prop.split(".", 1)[0]
+                    if base in QT_ATTACHED or base == "id" or base.startswith("on"):
+                        continue
+                    if "." in prop:
+                        if base in allowed:
+                            continue
+                        # 分组属性：base 必须在，且不校验子项（子项太多）
+                        err(
+                            f"W: {rel(full)}:{pline} {target} 没有 {base} 属性"
+                            f"（{raw[:60]}）"
+                        )
+                        continue
+                    if prop not in allowed:
+                        err(
+                            f"W: {rel(full)}:{pline} {target} 没有属性 {prop}"
+                            f"（{raw[:60]}）—— 真机会报 Cannot assign to non-existent property"
+                        )
+
+
+QT_ATTACHED = {
+    "Component", "Keys", "ListView", "GridView", "Drag", "MouseArea", "Accessible",
+    "Layout", "Screen", "Application", "Window", "Shortcut", "HoverHandler",
+    "TapHandler", "WheelHandler", "DragHandler", "PinchHandler", "SystemPalette",
+    "Style", "ToolTip", "Popup", "Dialog", "Menu", "Action",
+}
+
+
+def _object_blocks(src: str) -> list[tuple[str, int, list[tuple[int, str, str]]]]:
+    """粗粒度扫描每个 `TypeName {` 块及其自身一层的属性赋值。
+
+    用「块栈 + 花括号深度」判断属性归属：只有当前深度正好等于栈顶块的
+    **块体深度**时，这一行的 `名字:` 才算该块的属性。这样
+    `blog: ({ ... })` 这种 JS 对象字面量里的键就不会被误算到外层组件上
+    （那会产生成百上千条假报）。
+
+    只处理「一行一个属性」的常规写法；单行内联对象会漏掉，但不会误报。
+    """
+    out: list[tuple[str, int, list[tuple[int, str, str]]]] = []
+    # 栈元素: [类型名, 起始行, 属性列表, 块体深度]
+    stack: list[list] = []
+    depth = 0
+    in_block_comment = False
+    for lineno, raw_line in enumerate(src.split("\n"), 1):
+        line = raw_line
+        if in_block_comment:
+            if "*/" in line:
+                line = line.split("*/", 1)[1]
+                in_block_comment = False
+            else:
+                continue
+        if "/*" in line and "*/" not in line:
+            line = line.split("/*", 1)[0]
+            in_block_comment = True
+        if line.strip().startswith("//"):
+            line = ""
+        line = _STR_LITERAL_RE.sub('""', line)
+        opens = line.count("{")
+        closes = line.count("}")
+
+        # 1) 归属判断：只有在栈顶块自己的那一层才记录属性
+        if stack and depth == stack[-1][3] and opens == 0 and closes == 0:
+            m_prop = re.match(r"^\s*([A-Za-z_][\w.]*)\s*:", line)
+            if m_prop:
+                stack[-1][2].append((lineno, m_prop.group(1), raw_line.strip()))
+
+        # 2) 这一行是否打开一个新的类型块？
+        m_open = re.match(r"^\s*([A-Z][\w.]*)\s*\{\s*$", line)
+        if not m_open:
+            m_open = re.match(r"^\s*[A-Za-z_][\w.]*\s*:\s*([A-Z][\w.]*)\s*\{\s*$", line)
+        if m_open:
+            block: list = [m_open.group(1), lineno, [], depth + 1]
+            stack.append(block)
+            out.append((block[0], block[1], block[2]))
+            depth += 1
+        else:
+            depth += opens - closes
+
+        # 3) 弹出已经闭合的块
+        while stack and depth < stack[-1][3]:
+            stack.pop()
+    return out
+
+
+def _local_components() -> dict[str, str]:
+    """qml 下所有可作为类型使用的组件 → 文件路径（按文件名/相对路径两种写法）。"""
+    out: dict[str, str] = {}
+    qml_root = os.path.join(ROOT, "qml")
+    for sub in ("components", "pages", ""):
+        d = os.path.join(qml_root, sub) if sub else qml_root
+        if not os.path.isdir(d):
+            continue
+        for name in sorted(os.listdir(d)):
+            if name.endswith(".qml"):
+                out.setdefault(name[:-4], os.path.join(d, name))
+    return out
+
+
+def _declared_props(path: str) -> tuple[set[str], str]:
+    """(该文件根对象声明的属性名集合, 根元素类型名)。"""
+    src = read(path)
+    root_type, uses = _root_object_property_uses(src)
+    own = {prop for _line, prop, raw in uses
+           if re.match(r"^\s*(?:readonly\s+|default\s+)?property\s", raw)}
+    for m in re.finditer(r"^\s*(?:readonly\s+|default\s+)?property\s+[\w.<>]+\s+(\w+)\s*:", src, re.M):
+        own.add(m.group(1))
+    return own, root_type.split(".")[-1]
+
+
+def _build_effective_builtins() -> dict[str, set[str]]:
+    """把内建属性按继承链合并：Text 也要有 Item 的 width/height/anchors 等。"""
+    out: dict[str, set[str]] = {}
+    for name in QT_BUILTIN_BY_ROOT:
+        chain: set[str] = set()
+        cur: str | None = name
+        guard = 0
+        while cur and guard < 8:
+            chain |= QT_BUILTIN_BY_ROOT.get(cur, set())
+            cur = QT_PARENT.get(cur)
+            guard += 1
+        out[name] = chain
+    return out
+
+
+QT_PARENT: dict[str, str] = {
+    "Text": "Item", "TextEdit": "Item", "TextInput": "Item", "Image": "Item",
+    "MouseArea": "Item", "Rectangle": "Item", "Column": "Item", "Row": "Item",
+    "Grid": "Item", "Loader": "Item", "ListView": "Flickable", "Flickable": "Item",
+}
+QT_EFFECTIVE_BUILTINS = _build_effective_builtins()
+
+
 def _model_roles() -> tuple[set[str], set[str]]:
     """(角色名, 列表模型的 Q_PROPERTY 名)。
 
@@ -1342,6 +1684,8 @@ def main() -> int:
     check_lambda_this()
     check_mojibake()
     check_font()
+    check_qml_duplicate_properties()
+    check_component_props()
     check_workflow_yaml()
 
     for w in warnings:
