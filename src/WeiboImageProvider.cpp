@@ -167,7 +167,10 @@ QImage WeiboImageResponse::downloadAndDecode(const QString &url)
 
     // 工作线程私有 QNAM：绝不复用 GUI 线程的 WeiboNetwork/QNAM
     QNetworkAccessManager nam;
-    QNetworkRequest request(QUrl(url));
+    // 注意用花括号初始化：写成 QNetworkRequest request(QUrl(url));
+    // 会被 C++ 解析成函数声明（most vexing parse），
+    // 报错是 "request is of non-class type QNetworkRequest(QUrl)"。
+    QNetworkRequest request{QUrl(url)};
     request.setHeader(QNetworkRequest::UserAgentHeader, QString::fromLatin1(kMobileUserAgent));
     request.setRawHeader("Accept", "image/avif,image/webp,image/apng,image/*,*/*;q=0.8");
     request.setRawHeader("Referer", "https://m.weibo.cn/");

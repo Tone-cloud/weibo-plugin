@@ -1119,6 +1119,41 @@ def check_ps1_bom() -> None:
                 err(f"Q: {rel(p)} 带了 UTF-8 BOM，会破坏 shebang（#!/bin/bash 会失效）")
 
 
+VEXING_PARSE_RE = re.compile(
+    r"^\s*(?:const\s+)?(Q[A-Z]\w*|std::\w+|[A-Z]\w*)\s+(?:const\s+)?(\w+)\s*"
+    r"\(\s*(Q[A-Z]\w*|std::\w+|[A-Z]\w*)\s*\(\s*(\w+)\s*\)\s*\)\s*;",
+    re.M,
+)
+
+
+def check_most_vexing_parse() -> None:
+    """侦测 most vexing parse：`Type var(Other(expr));` 会被当成函数声明。
+
+    典型症状（CI 实际报过）：
+        error: request for member 'setHeader' in 'request',
+               which is of non-class type 'QNetworkRequest(QUrl)'
+    即 `QNetworkRequest request(QUrl(url));` 被解析成函数声明。
+    修法：`QNetworkRequest request{QUrl(url)};` 或再加一层括号。
+
+    为避免误报（`void f(int(x));` 是合法的函数声明），只在外层返回类型是
+    大写开头的类型（Q*/std::*/驼峰）时才报。
+    """
+    for dirpath, _dirs, files in os.walk(os.path.join(ROOT, "src")):
+        for name in files:
+            if not name.endswith((".cpp", ".h", ".hpp")):
+                continue
+            path = os.path.join(dirpath, name)
+            src = strip_js_and_strings(read(path))
+            for m in VEXING_PARSE_RE.finditer(src):
+                line = src[: m.start()].count("\n") + 1
+                err(
+                    f"R: {rel(path)}:{line} 疑似 most vexing parse："
+                    f"`{m.group(1)} {m.group(2)}({m.group(3)}({m.group(4)}));` "
+                    f"会被解析成函数声明（改成 `{m.group(1)} {m.group(2)}"
+                    f"{{{m.group(3)}({m.group(4)})}};`）"
+                )
+
+
 def main() -> int:
     fix = "--fix" in sys.argv
     print(f"校验根目录: {ROOT}" + ("  [--fix 模式]\n" if fix else "\n"))
@@ -1141,6 +1176,7 @@ def main() -> int:
     check_qml_model_roles()
     check_blogcard_keys()
     check_ps1_bom()
+    check_most_vexing_parse()
     check_workflow_yaml()
 
     for w in warnings:
