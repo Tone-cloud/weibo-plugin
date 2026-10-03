@@ -1154,6 +1154,25 @@ def check_most_vexing_parse() -> None:
                 )
 
 
+def check_lambda_this() -> None:
+    """lambda 里用了 this（emit 成员信号 / 裸 m_ 成员）却没在捕获列表里写 this。
+
+    这是 CI 上真实踩过的编译错误：
+        error: 'this' was not captured for this lambda function
+    逻辑复用 tools/lambda_this.py（可单独运行看详情）。
+    """
+    tools_dir = os.path.join(ROOT, "tools")
+    if tools_dir not in sys.path:
+        sys.path.insert(0, tools_dir)
+    try:
+        import lambda_this  # type: ignore
+    except Exception as exc:  # pragma: no cover
+        warn(f"S: 无法导入 tools/lambda_this.py（{exc}），跳过 lambda 捕获检查")
+        return
+    for problem in lambda_this.find_problems():
+        err(f"S: {problem}")
+
+
 def main() -> int:
     fix = "--fix" in sys.argv
     print(f"校验根目录: {ROOT}" + ("  [--fix 模式]\n" if fix else "\n"))
@@ -1177,6 +1196,7 @@ def main() -> int:
     check_blogcard_keys()
     check_ps1_bom()
     check_most_vexing_parse()
+    check_lambda_this()
     check_workflow_yaml()
 
     for w in warnings:

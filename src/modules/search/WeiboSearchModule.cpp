@@ -165,7 +165,9 @@ void WeiboSearchModule::searchStatus(const QString &q, int page) {
     QPointer<WeiboController> guard(m_controller);
     network->get(
         QStringLiteral("/search/status"), params,
-        [guard, model, firstPage, keyword](const QJsonObject &data) {
+        // 注意：lambda 里要 `emit searchFinished(...)`，必须捕获 this，
+        // 否则 GCC 报 "'this' was not captured for this lambda function"。
+        [this, guard, model, firstPage, keyword](const QJsonObject &data) {
             WeiboController *self = guard.data();
             if (!self || !model)
                 return;
@@ -228,7 +230,7 @@ void WeiboSearchModule::searchUsers(const QString &q, int page) {
     QPointer<WeiboController> guard(m_controller);
     network->get(
         QStringLiteral("/search/user"), params,
-        [guard, model, keyword](const QJsonObject &data) {
+        [this, guard, model, keyword](const QJsonObject &data) {
             WeiboController *self = guard.data();
             if (!self || !model)
                 return;
@@ -292,7 +294,7 @@ void WeiboSearchModule::searchTopics(const QString &q, int page) {
     QPointer<WeiboController> guard(m_controller);
     network->get(
         QStringLiteral("/search/topic"), params,
-        [guard, model, keyword](const QJsonObject &data) {
+        [this, guard, model, keyword](const QJsonObject &data) {
             WeiboController *self = guard.data();
             if (!self || !model)
                 return;

@@ -42,7 +42,8 @@ void WeiboMediaModule::prepare(const QString &id) {
     QPointer<WeiboController> guard(m_controller);
     network->get(
         QStringLiteral("/media/info"), params,
-        [guard](const QJsonObject &data) {
+        // 需要捕获 this 才能 emit resolved(...)
+        [this, guard](const QJsonObject &data) {
             WeiboController *self = guard.data();
             if (!self)
                 return;
