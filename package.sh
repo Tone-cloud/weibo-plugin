@@ -92,6 +92,17 @@ for key in ("main_qml", "main_so"):
     else:
         print(f"FATAL metadata.json 的 {key} -> {want} 不在包里")
         fail = True
+# 中文字体：缺了插件能起来，但中文全是方块，属于必须拦住的问题
+if "qml/fonts/msyh.ttf" in names:
+    print("OK   中文字体 qml/fonts/msyh.ttf")
+else:
+    print("FATAL zip 里没有中文字体 qml/fonts/msyh.ttf（设备上中文会显示成方块）")
+    fail = True
+# 条目名必须用正斜杠，反斜杠在 Linux 下会解成文件名字符
+bad = [n for n in names if "\\" in n]
+if bad:
+    print(f"FATAL zip 有 {len(bad)} 个反斜杠条目名，例如 {bad[0]!r}")
+    fail = True
 sys.exit(1 if fail else 0)
 PY
 

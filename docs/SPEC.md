@@ -81,7 +81,7 @@ weibo_plugin/
 │   │   └── Theme.qml           # 主题单例（必须在 components/ 下，见 §9）
 │   ├── js/{ImageUrl.js,RichText.js,TimeText.js}
 │   ├── pages/*.qml
-│   └── fonts/                  # （可选）weibo.ttf
+│   └── fonts/                  # msyh.ttf（中文字体，必须随包）
 ├── tools/verify.py             # 结构 / 契约静态校验（CI 第一个 job）
 ├── tools/go_lint.py            # Go 兜底静态检查
 ├── tools/lambda_this.py        # lambda 缺 this 侦测（被 verify.py 的 S 项复用）

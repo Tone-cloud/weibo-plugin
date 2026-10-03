@@ -308,6 +308,7 @@ jobs:
           test -f metadata.json        || { echo "missing metadata.json"; exit 1; }
           test -f icon.png             || { echo "missing icon.png"; exit 1; }
           test -f cookies.example.json || { echo "missing cookies.example.json"; exit 1; }
+          test -f qml/fonts/msyh.ttf   || { echo "missing qml/fonts/msyh.ttf (CJK font)"; exit 1; }
           echo "=== file types ==="
           file ./libweibo_plugin.so ./server
           file ./libweibo_plugin.so | grep -qE 'aarch64|ARM aarch64' \
@@ -347,6 +348,9 @@ jobs:
               print(f'OK zip {key}: {want}')
           assert 'server' in names, 'zip is missing server'
           assert 'qml/components/Theme.qml' in names, 'zip is missing qml/components/Theme.qml'
+          # The CJK font must be in the zip: without it every Chinese glyph on
+          # the device renders as a box, yet the plugin still starts up fine.
+          assert 'qml/fonts/msyh.ttf' in names, 'zip is missing qml/fonts/msyh.ttf (CJK font)'
           # Entry names must use forward slashes; backslashes extract as literal
           # filename characters on Linux.
           bad = [n for n in names if '\\' in n]

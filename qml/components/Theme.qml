@@ -6,12 +6,16 @@ import QtQuick 2.12
 //
 // 位置：qml/components/Theme.qml（由 qml/components/qmldir 声明为 singleton）。
 // 因此所有相对路径都以 qml/components/ 为基准 —— 字体在 qml/fonts/ 下，
-// 所以是 "../fonts/weibo.ttf"（改路径时别忘了这一点）。
+// 所以是 "../fonts/msyh.ttf"（改路径时别忘了这一点）。
 Item {
-    // 仓库不提供字体文件：缺失时 appFont.name 为 ""，fontFamily 自动回退。
+    // 中文字体：qml/fonts/msyh.ttf（Microsoft YaHei，与 bili 插件同一份文件）。
+    // 词典笔自带的字体不含中文字形，不加载它中文会显示成方块。
+    // FontLoader 是异步的：刚加载完 appFont.name 可能还是 ""，
+    // 此时 fontFamily 回退到 "Microsoft YaHei"（正好就是这个字体的族名，
+    // 系统里装了同名字体时也能命中）。
     FontLoader {
         id: appFont
-        source: "../fonts/weibo.ttf"
+        source: "../fonts/msyh.ttf"
     }
 
     // ── 品牌色 ──

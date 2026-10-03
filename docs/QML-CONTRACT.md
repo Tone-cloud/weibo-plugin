@@ -16,7 +16,7 @@ qml/
 │   └── *.qml
 ├── pages/              # 页面（目录隐式导入，无需 qmldir）
 ├── js/                 # .pragma library 工具库
-└── fonts/              # （可选）weibo.ttf
+└── fonts/              # msyh.ttf（中文字体，必须随包）
 ```
 
 > `qml/` 根目录**故意没有 `qmldir`**。若在那里再声明一次 Theme 与 21 个组件，

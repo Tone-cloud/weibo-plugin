@@ -48,6 +48,11 @@ def warn(msg: str) -> None:
     warnings.append(msg)
 
 
+def log_ok(msg: str) -> None:
+    """正向确认（打印成 [ok]），用于「这东西确实被查过且没问题」的项。"""
+    print(f"  [ok  ] {msg}")
+
+
 def rel(path: str) -> str:
     return os.path.relpath(path, ROOT).replace("\\", "/")
 
@@ -978,12 +983,54 @@ def check_qml_relative_paths() -> None:
                     continue
                 line = src[: m.start()].count("\n") + 1
                 if ref.endswith((".ttf", ".otf", ".ttc")):
-                    warn(
+                    # 插件自带中文字体（qml/fonts/msyh.ttf），缺了设备上中文全是方块，
+                    # 所以这里是**错误**而不是警告：字体必须随包一起走。
+                    err(
                         f"N: {rel(full)}:{line} 字体 {ref} 不存在"
-                        f"（可选文件，缺失时回退到系统字体）"
+                        f"（期望 {rel(target)}）—— 缺少中文字体时设备上中文会显示成方块"
                     )
                 else:
                     err(f"N: {rel(full)}:{line} 相对路径 {ref} 解析不到文件（期望 {rel(target)}）")
+
+
+def check_font() -> None:
+    """插件自带的中文字体必须是**真正的** TrueType。
+
+    为什么单独查：设备自带字体不含中文字形，这份字体一旦坏掉，插件照样能启动，
+    只是中文全变成方块 —— 属于「编译/打包全通过、上机才发现」的问题。
+    真实踩过的坑包括：被 Git LFS 换成几行文本指针、被当文本做了换行转换、
+    复制成了 `.ttc` 字体集合（Qt 5.15 的 FontLoader 不一定能加载）。
+    """
+    path = os.path.join(ROOT, "qml", "fonts", "msyh.ttf")
+    if not os.path.exists(path):
+        err("U: qml/fonts/msyh.ttf 不存在 —— 设备上中文会显示成方块")
+        return
+    raw = open(path, "rb").read()
+    if len(raw) < 100 * 1024:
+        err(f"U: qml/fonts/msyh.ttf 只有 {len(raw)} 字节，不像真字体（可能被 LFS 指针或占位文件替换）")
+        return
+    if raw[:40].startswith(b"version https://git-lfs"):
+        err("U: qml/fonts/msyh.ttf 是 Git LFS 指针文件，不是字体本身")
+        return
+    magic = raw[:4]
+    if magic not in (b"\x00\x01\x00\x00", b"true", b"OTTO", b"ttcf"):
+        err(f"U: qml/fonts/msyh.ttf 魔数 {magic.hex()} 不是字体（被当成文本转换过？）")
+        return
+    if magic == b"ttcf":
+        err("U: qml/fonts/msyh.ttf 是 .ttc 字体集合，FontLoader 在 Qt 5.15 上不一定能加载，请换成单个 .ttf")
+        return
+    num_tables = int.from_bytes(raw[4:6], "big")
+    tables = {raw[12 + i * 16: 16 + i * 16].decode("latin1") for i in range(num_tables)}
+    needed = {"head", "name", "cmap", "hhea"}
+    if magic == b"OTTO":
+        needed.add("CFF ")
+    else:
+        needed |= {"glyf", "loca"}
+    missing = sorted(needed - tables)
+    if missing:
+        err(f"U: qml/fonts/msyh.ttf 缺少必要的字体表: {missing}")
+    else:
+        log_ok(f"U: 中文字体 qml/fonts/msyh.ttf 正常（{len(raw) // 1024} KB，{num_tables} 张表）")
 
 
 def _model_roles() -> tuple[set[str], set[str]]:
@@ -1294,6 +1341,7 @@ def main() -> int:
     check_most_vexing_parse()
     check_lambda_this()
     check_mojibake()
+    check_font()
     check_workflow_yaml()
 
     for w in warnings:

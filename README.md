@@ -61,18 +61,23 @@ weibo_plugin/
 > 想查看服务日志：`pkill -f server` 后以 `DEBUG=true ./server` 手动启动，
 > 此时会监听 `0.0.0.0:8010` 便于在电脑上调试。
 
-### 字体（重要）
+### 字体
 
-设备自带的 CJK 字体不一定能被 QML 引用。插件按以下顺序找字体：
+设备自带的字体没有中文字形，所以插件**自带**一份中文字体：
 
 ```text
-qml/fonts/weibo.ttf        ← 推荐：自己放一个中文字体进来
-系统字体（Microsoft YaHei 等）
+qml/fonts/msyh.ttf         ← 已随仓库提供（Microsoft YaHei，14.3 MB）
+系统字体（Microsoft YaHei 等）  ← FontLoader 异步加载完成前的回退
 ```
 
-仓库**不包含**字体文件（体积与授权原因）。如果界面上中文显示成方块，
-把一个中文 TTF（例如开源的 **LXGW WenKai**、**思源黑体**）重命名为
-`weibo.ttf` 放到 `qml/fonts/` 下即可，`Theme.qml` 会自动使用它。
+这份文件与 [`cc/bili_plugin/qml/msyh.ttf`] 是同一份 —— bili 插件在同一台词典笔上
+用的就是它，字形覆盖和加载性能都验证过。**别删**：缺了它插件照样能启动，
+但界面上中文全是方块。
+
+想换成开源字体（体积/授权考虑）：保持文件名不变直接替换即可，
+要求与注意事项见 [`qml/fonts/README.md`](qml/fonts/README.md)。
+`tools/verify.py` 的 U 项会校验它确实是真 TrueType（能挡住 LFS 指针、
+被当文本转换、误用 `.ttc` 这几种「静默失败」），CI 也会断言它在安装包里。
 
 ### 登录
 
@@ -349,7 +354,7 @@ weibo_plugin/
 │   │   └── Theme.qml          # 主题单例（必须在 components/ 下）
 │   ├── pages/                 # 业务页面（13 个）
 │   ├── js/                    # ImageUrl / RichText / TimeText
-│   └── fonts/                 # （可选）weibo.ttf
+│   └── fonts/                 # msyh.ttf（中文字体，必须随包）
 ├── src/                       # Qt/C++ 插件
 │   ├── WeiboController.*      # QML 边界、sidecar bring-up、插件入口
 │   ├── WeiboModels.*          # 列表模型与归一化解析

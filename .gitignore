@@ -40,10 +40,13 @@ search_history.json
 publish_draft.txt
 .smoke_*
 
-# ---- fonts (large, licensing) ----
+# ---- fonts ----
+# 默认不收字体（体积/授权），但插件必须自带中文字体，否则中文是方块，
+# 所以只对 qml/fonts/msyh.ttf 开一个例外（与 bili 插件同一份文件）。
 *.ttf
 *.ttc
 *.otf
+!qml/fonts/msyh.ttf
 !qml/fonts/README.md
 
 # ---- python (tools/*.py) ----

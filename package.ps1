@@ -126,6 +126,8 @@ foreach ($key in @("main_qml", "main_so")) {
 }
 if ($names -notcontains 'server') { throw "zip 里没有 server" }
 if ($names -notcontains 'qml/components/Theme.qml') { throw "zip 里没有 qml/components/Theme.qml" }
+# 中文字体：缺了插件能起来，但中文全是方块，属于必须拦住的问题
+if ($names -notcontains 'qml/fonts/msyh.ttf') { throw "zip 里没有中文字体 qml/fonts/msyh.ttf（设备上中文会显示成方块）" }
 
 $size = (Get-Item $Out).Length / 1MB
 Write-Host ""
