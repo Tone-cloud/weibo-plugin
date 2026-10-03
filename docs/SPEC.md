@@ -84,6 +84,8 @@ weibo_plugin/
 │   └── fonts/                  # （可选）weibo.ttf
 ├── tools/verify.py             # 结构 / 契约静态校验（CI 第一个 job）
 ├── tools/go_lint.py            # Go 兜底静态检查
+├── tools/lambda_this.py        # lambda 缺 this 侦测（被 verify.py 的 S 项复用）
+├── tools/pen-push.ps1          # 电脑端：生成 cookies.json 并自动送入词典笔
 ├── build_server.ps1            # Windows 编译 server（同 cc\netease，产物→仓库根）
 ├── cookies.example.json        # Cookie 模板（无真实值，随包发布）
 └── go_server/
@@ -224,7 +226,9 @@ weibo_plugin/
 |------|------|------|------|
 | GET | `/` | — | 接口索引（人类可读） |
 | GET | `/server/ping` | — | `{ "ok":true, "version":"1.0.0", "logged_in":bool }` |
-| GET | `/config` | — | `{ "logged_in":bool, "uid":0, "screen_name":"", "avatar":"" }` |
+| GET | `/server/state` | — | 本地快照，**不请求上游**：`{ "logged_in":bool, "verified":bool, "uid":0, "screen_name":"", "avatar":"", "cookie_rev":"", "cookie_file":"", "plugin_dir":"", "version":"1.0.0" }` |
+| GET | `/config` | — | `{ "logged_in":bool, "verified":bool, "uid":0, "screen_name":"", "avatar":"" }` |
+| POST | `/config/import` | 见下 | `{ "ok":true, "saved":true, "logged_in":bool, "verified":bool, "uid":0, "screen_name":"", "cookie_file":"", "cookie_rev":"", "message":"" }` |
 | GET | `/feed/home` | `since_id`,`fresh_type` | `{ "items":[BlogItem], "since_id":"", "has_more":bool }` |
 | GET | `/feed/follow` | `since_id` | 同上（关注流） |
 | GET | `/feed/group` | `gid`,`since_id` | 同上（分组流） |
@@ -266,9 +270,39 @@ weibo_plugin/
 | POST | `/topic/checkin/all` | — | `{ "ok":true, "signed":0, "failed":0, "details":[{"id":"","name":"","ok":true,"message":""}] }` |
 | GET | `/topic/search` | `q`,`page` | `{ "items":[TopicItem], "page":1, "has_more":bool }` |
 | GET | `/media/info` | `id` | `{ "type":"video|live", "title":"", "cover":"", "url":"", "qualities":[{"label":"","url":""}] }` |
-| POST | `/login/import` | `cookie` | `{ "ok":true, "logged_in":bool, "uid":0, "screen_name":"" }` |
-| GET | `/login/info` | — | `{ "logged_in":bool, "uid":0, "screen_name":"", "avatar":"", "expires_at":0 }` |
+| POST | `/login/import` | `cookie` | `{ "ok":true, "saved":true, "logged_in":bool, "verified":bool, "uid":0, "screen_name":"", "message":"" }` |
+| GET | `/login/info` | — | `{ "logged_in":bool, "verified":bool, "uid":0, "screen_name":"", "avatar":"", "expires_at":0 }` |
 | POST | `/logout` | — | `{ "ok":true }` |
+
+> **`logged_in` 与 `verified` 的区别（重要）**
+>
+> * `logged_in` = 本地**持有登录票据**（存在 SUB/SUBP）。离线时也是 `true`，
+>   这样界面能照常显示账号，只是请求会失败。
+> * `verified` = 上游 `/api/config` **确认过**登录态。Cookie 过期、或当前访问不到
+>   微博时为 `false`。
+>
+> 导入 Cookie 时服务端**先落盘再校验**：只要解析出可用票据就返回 `saved=true`，
+> 离线也能导入成功，等联网后由文件监听 / 轮询自动生效。因此判断「是否真的可用」
+> 要看 `verified`，不能看 `logged_in`。
+
+### 3.5 `POST /config/import` 的请求体（四种写法都接受）
+
+```jsonc
+// 1) cookies.json 原文（推荐，也就是 tools/pen-push.ps1 生成的文件）
+{"cookies":[{"name":"SUB","value":"...","domain":".weibo.com","path":"/"}]}
+
+// 2) 裸数组
+[{"name":"SUB","value":"..."}]
+
+// 3) 直接给 Cookie 头
+{"cookie":"SUB=...; SUBP=..."}
+
+// 4) 纯文本（Content-Type 任意）
+SUB=...; SUBP=...
+```
+
+开头带 UTF-8 BOM 也能识别（记事本 / PowerShell 5.1 存 UTF-8 会写 BOM，
+`encoding/json` 本身遇到 BOM 会报错，服务端会先剥掉）。
 
 ---
 
@@ -456,7 +490,18 @@ activeUser()   // 见下方说明
 ```
 importCookie(cookie) checkLogin() logout() fetchConfig()
 loggedIn() uid()
+startAutoRefresh(intervalMs=4000) stopAutoRefresh() refreshNow() autoRefreshRunning()
 ```
+> **自动导入（电脑端 → 词典笔）**
+> 构造函数里就启动了一个 4 秒周期的定时器，轮询 `GET /server/state`
+> （纯本地快照，**不请求上游**，所以不会因为高频轮询触发风控）。
+> 电脑端通过 adb push 或 `POST /config/import` 把 `cookies.json` 送达后：
+> ① sidecar 的文件监听 2 秒内自动加载；② 本模块在下一次轮询感知到状态变化，
+> 自动调用 `setLoginUser()` 并发出 `loginAutoRefreshed(screenName)`，
+> 界面上**不需要任何操作**。
+> 状态机：`!logged_in` → 清登录态；`logged_in && !verified` → 什么都不做
+> （有票据但没校验过，不能用空昵称覆盖界面）；`logged_in && verified` → 登录。
+> 首次同步不弹提示，只有「真的从未登录变成已登录」才 toast。
 
 **publish** (`WeiboPublishModule`)
 ```
@@ -626,4 +671,72 @@ CI 产出三个 artifact：`libweibo_plugin.so`、`server`、`com.weibopocket.cl
 * 改完代码先跑 `python3 tools/verify.py`（CI 的第一个 job 也是它）：
   它校验 metadata ↔ 打包布局、qmldir ↔ 实际文件、`.pro` ↔ 源文件、
   `Q_INVOKABLE`/`Q_PROPERTY` 定义、QML 的 controller 调用 ↔ 头文件、
-  Go 只用标准库、路由 ↔ 本 SPEC 对齐、workflow YAML 结构。
+  `model.<角色>` ↔ `roleNames()`、most vexing parse、lambda 缺 this、
+  `.ps1` 的 UTF-8 BOM、Go 只用标准库、路由 ↔ 本 SPEC 对齐、workflow YAML 结构。
+  另有 `tools/go_lint.py`（未用 import / 未用局部变量 / 未定义调用）与
+  `tools/lambda_this.py`（单独排查 lambda 捕获）。
+
+---
+
+## 10. 电脑端导入 Cookie（自动生效）
+
+词典笔只有 320×170 触摸屏，在笔上粘贴 `SUB`/`SUBP` 又慢又容易错。
+目标：**在电脑上完成，笔上零操作**。
+
+```text
+电脑                                          词典笔
+────                                          ──────
+tools\pen-push.ps1
+  ├─ 解析 Cookie / cookies.json
+  ├─ 生成 cookies.json（UTF-8 无 BOM）
+  └─ 送达 ──┬─ adb push ──────────────► /userdisk/PenMods/plugins/weibo_plugin/cookies.json
+            │                                   │
+            │                          sidecar 文件监听（每 2s stat 一次）
+            │                                   ↓ 自动 loadCookieStore + refreshLoginState
+            ├─ POST /config/import ────► 同一个文件（服务端自己写）
+            │                                   ↓
+            └─ 盘符复制 ─────────────────►     C++ WeiboLoginModule 每 4s 轮询 GET /server/state
+                                                ↓ 发现 logged_in && verified
+                                             setLoginUser() + loginAutoRefreshed 信号
+                                                ↓
+                                             界面自动显示昵称（无需任何触控）
+```
+
+### 10.1 电脑端：`tools/pen-push.ps1`
+
+```powershell
+# 1) 最省事：从浏览器复制 Cookie 头
+powershell -NoProfile -ExecutionPolicy Bypass -File tools\pen-push.ps1 `
+    -Cookie "SUB=xxxxx; SUBP=yyyyy"
+
+# 2) 从文本文件读；3) 已有 cookies.json；4) 走网络；5) 只看计划；6) 反向拉取
+... -CookieFile .\cookie.txt
+... -Json .\cookies.json
+... -Cookie "SUB=..." -Method http -Pen 192.168.1.23
+... -Cookie "SUB=..." -DryRun
+... -Pull .\cookies-from-pen.json
+```
+
+送达方式 `-Method auto|usb|adb|http`，`auto` 按 **盘符 → adb → http** 顺序尝试：
+
+| 方式 | 说明 |
+|------|------|
+| `usb` | `/userdisk` 以盘符方式挂载时直接复制文件 |
+| `adb` | **推荐**。PenManager 用的就是 adb；多设备时会用 `ls /userdisk/PenMods/plugins` 把手机/模拟器排除掉；设备上没有 PenMods 时拒绝推送（除非 `-Force`） |
+| `http` | 笔上 sidecar 以 `WEIBO_BIND=0.0.0.0` 启动时 POST `/config/import`（同一局域网） |
+
+脚本会：校验 SUB 存在 / 长度合理 / 不是 `cookies.example.json` 的占位文案 →
+生成 `cookies.json`（**UTF-8 无 BOM**：Go 的 `encoding/json` 遇 BOM 会报
+`invalid character 'ï'`）→ 送达 → 用 `/server/state` 或响应里的 `verified` 报告是否真的生效。
+
+### 10.2 词典笔端：让导入自动生效
+
+| 机制 | 位置 | 作用 |
+|------|------|------|
+| 文件监听 | `go_server/main/watch.go` `startCookieWatcher` | 每 2 秒 stat 一次 `cookies.json`，mtime/size 变了就自动重新加载；服务端自己写文件时会同步指纹，避免重复处理 |
+| 本地快照 | `GET /server/state` | **只读缓存、不请求上游**，供 C++ 高频轮询（用 `/config` 会每 4 秒打一次 m.weibo.cn，容易风控） |
+| 状态轮询 | `WeiboLoginModule::pollLocalState` | 每 4 秒读 `/server/state`；`logged_in && verified` 时自动 `setLoginUser()` 并发 `loginAutoRefreshed(name)` |
+| 网络开关 | 环境变量 `WEIBO_BIND` | 默认只监听 `127.0.0.1`；设成 `0.0.0.0` 时启动横幅会打印局域网地址，供电脑端 POST |
+
+> 想让电脑端走 HTTP，需要在设备上以 `WEIBO_BIND=0.0.0.0` 启动 sidecar。
+> 插件默认拉起的是 `127.0.0.1`（更安全）；用 adb push 则完全不需要改监听地址。

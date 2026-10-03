@@ -5,13 +5,21 @@
 #include "WeiboModels.h"
 #include "WeiboNetwork.h"
 
+#include <QDebug>
 #include <QJsonObject>
 #include <QMap>
 #include <QPointer>
 #include <QString>
+#include <QTimer>
 
 WeiboLoginModule::WeiboLoginModule(WeiboController *controller)
-    : QObject(controller), m_controller(controller) {}
+    : QObject(controller), m_controller(controller) {
+    // 构造时就把自动刷新跑起来：电脑端把 cookies.json 传进插件目录后，
+    // sidecar 会自动加载，这里每 4 秒问一次 /server/state 感知变化，
+    // 界面上完全不需要用户操作。
+    // 注意：定时器第一次触发在 interval 之后，那时 controller 的模型已经建好了。
+    startAutoRefresh(4000);
+}
 
 // ====== Cookie 导入 ======
 
@@ -52,6 +60,22 @@ void WeiboLoginModule::importCookie(const QString &cookie) {
                 return;  // self 为空说明模块也已随之销毁，不能再碰 this
 
             m_busy = false;
+            self->setIsLoading(false);
+
+            // verified 表示「上游 /api/config 确认过」。Go 侧现在**先落盘再校验**，
+            // 所以离线或 Cookie 过期时也会保存成功，但这里不能报「登录成功」。
+            const bool verified =
+                WeiboJson::boolean(data, "verified", WeiboJson::boolean(data, "logged_in", false));
+            if (!verified) {
+                const QString warning = WeiboJson::str(
+                    data, "message",
+                    QStringLiteral("Cookie 已保存，但未通过登录校验（可能已过期或离线）"));
+                // 同步一下本地状态：票据已存下，等联网校验通过后轮询会自动登录。
+                pollLocalState();
+                emit importFailed(warning);
+                emit self->toastMessage(warning);
+                return;
+            }
 
             WeiboUser user;
             user.uid = WeiboJson::num(data, "uid", 0);
@@ -62,7 +86,6 @@ void WeiboLoginModule::importCookie(const QString &cookie) {
             // setLoginUser 会发出 loginStateChanged，是本模块唯一可写的登录态钩子
             // （m_loggedIn 是控制器私有成员）。
             self->setLoginUser(user);
-            self->setIsLoading(false);
 
             emit importSucceeded(user.name);
             emit self->toastMessage(QStringLiteral("登录成功"));
@@ -218,4 +241,100 @@ bool WeiboLoginModule::loggedIn() const {
 
 QString WeiboLoginModule::uid() const {
     return m_controller ? QString::number(m_controller->userId()) : QString();
+}
+
+// ====== 电脑端导入后的自动生效 ======
+
+void WeiboLoginModule::startAutoRefresh(int intervalMs) {
+    if (intervalMs < 1500)
+        intervalMs = 1500; // 再快也没意义，只会白耗电
+
+    if (!m_watchTimer) {
+        m_watchTimer = new QTimer(this);
+        m_watchTimer->setTimerType(Qt::CoarseTimer);
+        QObject::connect(m_watchTimer, &QTimer::timeout, this,
+                         [this]() { pollLocalState(); });
+    }
+    m_watchTimer->start(intervalMs);
+    qDebug() << "[WeiboLogin] 登录态自动刷新已启动，间隔" << intervalMs << "ms";
+}
+
+void WeiboLoginModule::stopAutoRefresh() {
+    if (m_watchTimer)
+        m_watchTimer->stop();
+}
+
+bool WeiboLoginModule::autoRefreshRunning() const {
+    return m_watchTimer && m_watchTimer->isActive();
+}
+
+void WeiboLoginModule::refreshNow() {
+    pollLocalState();
+}
+
+// pollLocalState 轮询 /server/state 感知「电脑端刚把 Cookie 导进来」。
+//
+// 刻意不复用 /config：那个接口会顺带请求 m.weibo.cn/api/config，
+// 每几秒打一次上游容易被风控；/server/state 只读 sidecar 本地缓存。
+void WeiboLoginModule::pollLocalState() {
+    if (!m_controller)
+        return;
+
+    WeiboNetwork *network = m_controller->network();
+    if (!network)
+        return;
+
+    QPointer<WeiboController> guard(m_controller);
+    network->get(
+        QStringLiteral("/server/state"), QMap<QString, QString>(),
+        [this, guard](const QJsonObject &data) {
+            WeiboController *self = guard.data();
+            if (!self)
+                return; // self 为空说明模块也已销毁，不能再碰 this
+
+            const bool loggedIn = WeiboJson::boolean(data, "logged_in", false);
+            const bool verified = WeiboJson::boolean(data, "verified", loggedIn);
+            const QString uidText = WeiboJson::str(data, "uid");
+            const QString name = WeiboJson::str(data, "screen_name");
+            const QString avatar = WeiboJson::str(data, "avatar");
+
+            const bool firstSync = (m_lastLoggedIn < 0);
+            const bool changed = firstSync || loggedIn != (m_lastLoggedIn == 1) ||
+                                 uidText != m_lastUid || name != m_lastName;
+            m_lastLoggedIn = loggedIn ? 1 : 0;
+            m_lastUid = uidText;
+            m_lastName = name;
+
+            if (!changed)
+                return;
+
+            if (!loggedIn) {
+                if (self->loggedIn())
+                    self->clearLocalLoginState();
+                return;
+            }
+
+            // 有票据但还没通过上游校验：不要用空昵称去覆盖界面，
+            // 等校验通过（联网后监听会重试）再由下一次轮询登录。
+            if (!verified)
+                return;
+
+            WeiboUser user;
+            user.uid = uidText.toLongLong();
+            user.name = name;
+            user.avatar = avatar;
+            user.isMe = true;
+            self->setLoginUser(user);
+
+            // 首次同步（插件刚加载）不提示，否则每次进来都弹一条；
+            // 只有「从别的状态变成已登录」才是电脑端刚导入完。
+            if (!firstSync) {
+                emit loginAutoRefreshed(name);
+                emit self->toastMessage(
+                    QStringLiteral("已从电脑端导入登录信息：%1").arg(name));
+            }
+        },
+        [](int, const QString &) {
+            // 轮询失败静默：sidecar 可能还在启动，或者插件正在退出
+        });
 }

@@ -464,17 +464,19 @@ def check_workflow_yaml() -> None:
 
     work_indent = 0  # 进入块标量后的最小缩进
     for lineno, line in enumerate(raw_lines, 1):
-        if "\t" in line:
-            err(f"J: build.yml:{lineno} 含 tab 字符（YAML 禁用）")
         if not line.strip() or line.lstrip().startswith("#"):
             continue
         indent = len(line) - len(line.lstrip(" "))
+        # 块标量（run: | 之类）里的内容是 shell / python 代码，
+        # 缩进可以任意、也可以带 tab，必须在做 YAML 语法检查之前跳过。
+        if work_indent and indent >= work_indent:
+            continue
+        work_indent = 0
+        if "\t" in line:
+            err(f"J: build.yml:{lineno} 含 tab 字符（YAML 映射部分禁用 tab 缩进）")
         if indent % 2 != 0:
             err(f"J: build.yml:{lineno} 缩进 {indent} 不是 2 的倍数")
         stripped = line.strip()
-        if work_indent and indent >= work_indent:
-            continue  # 块标量内容，不做语法检查
-        work_indent = 0
         # 列表项 / 键值行
         is_item = stripped.startswith("- ")
         probe = stripped[2:].strip() if is_item else stripped
@@ -1067,14 +1069,23 @@ def ps1_files() -> list[str]:
     return sorted(out)
 
 
-def fix_ps1_bom() -> int:
-    """给含非 ASCII 的 .ps1 加 UTF-8 BOM。
+# 这些扩展名的文件**绝不能**有 UTF-8 BOM：
+#   .sh    → 会破坏 shebang（#!/bin/bash 变成 \xef\xbb\xbf#!/bin/bash）
+#   .go    → Go 工具链容忍，但没必要
+#   .json  → encoding/json 直接报 invalid character 'ï'
+#   .yml   → YAML 规范允许，但 GitHub Actions/各种解析器行为不一致，一律不要
+#   .cpp/.h/.qml/.js/.md/.pro/.lua → 交给编译器/解释器时都是纯文本更安全
+NO_BOM_EXTS = (".sh", ".go", ".json", ".yml", ".yaml", ".cpp", ".h", ".hpp",
+               ".qml", ".js", ".md", ".pro", ".lua", ".txt", ".gitignore",
+               ".gitattributes")
 
-    Windows PowerShell 5.1 读 .ps1 时如果**没有 BOM**，会按系统 ANSI 代码页
-    （简体中文机器上是 GBK）解码。UTF-8 的中文注释会被解成乱码，其中的字节
-    还可能凑成引号/花括号，直接导致 "Unexpected token" 之类的语法错误 ——
-    脚本根本跑不起来。加 BOM 后 5.1 会正确按 UTF-8 解析。
-    注意：绝对不能给 .sh 加 BOM，那会破坏 shebang。
+
+def fix_ps1_bom() -> int:
+    """BOM 策略修复：给含非 ASCII 的 .ps1 补 UTF-8 BOM；去掉其它文本文件的多余 BOM。
+
+    为什么 .ps1 必须带 BOM：Windows PowerShell 5.1 读没有 BOM 的 .ps1 会按系统
+    ANSI 代码页（简中机器上是 GBK）解码，UTF-8 的中文注释被解成乱码后可能凑出
+    引号/花括号，直接报 "Unexpected token" 之类的语法错误 —— 脚本根本跑不起来。
     """
     changed = 0
     for path in ps1_files():
@@ -1091,6 +1102,19 @@ def fix_ps1_bom() -> int:
             fh.write(b"\xef\xbb\xbf" + raw)
         print(f"  [fix ] 为 {rel(path)} 添加 UTF-8 BOM")
         changed += 1
+
+    for dirpath, dirnames, files in os.walk(ROOT):
+        dirnames[:] = [d for d in dirnames if d not in (".git", "build", "dist", "__pycache__")]
+        for name in files:
+            if not name.endswith(NO_BOM_EXTS) and name not in (".gitignore", ".gitattributes"):
+                continue
+            path = os.path.join(dirpath, name)
+            raw = open(path, "rb").read()
+            if raw.startswith(b"\xef\xbb\xbf"):
+                with open(path, "wb") as fh:
+                    fh.write(raw[3:])
+                print(f"  [fix ] 去掉 {rel(path)} 多余的 UTF-8 BOM")
+                changed += 1
     return changed
 
 
@@ -1108,15 +1132,17 @@ def check_ps1_bom() -> None:
                 f"Q: {rel(path)} 含非 ASCII 但没有 UTF-8 BOM —— "
                 f"Windows PowerShell 5.1 会按 GBK 解析并报语法错误（跑 --fix 修复）"
             )
-    # .sh 绝不能有 BOM（会破坏 shebang）
+
     for dirpath, dirnames, files in os.walk(ROOT):
         dirnames[:] = [d for d in dirnames if d not in (".git", "build", "dist", "__pycache__")]
         for name in files:
-            if not name.endswith(".sh"):
+            if not name.endswith(NO_BOM_EXTS) and name not in (".gitignore", ".gitattributes"):
                 continue
-            p = os.path.join(dirpath, name)
-            if open(p, "rb").read().startswith(b"\xef\xbb\xbf"):
-                err(f"Q: {rel(p)} 带了 UTF-8 BOM，会破坏 shebang（#!/bin/bash 会失效）")
+            path = os.path.join(dirpath, name)
+            if open(path, "rb").read().startswith(b"\xef\xbb\xbf"):
+                extra = "（会破坏 shebang）" if name.endswith(".sh") else \
+                        "（encoding/json 会报 invalid character）" if name.endswith(".json") else ""
+                err(f"Q: {rel(path)} 带了多余的 UTF-8 BOM{extra}（跑 --fix 去掉）")
 
 
 VEXING_PARSE_RE = re.compile(

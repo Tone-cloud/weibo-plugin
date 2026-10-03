@@ -18,9 +18,14 @@ import (
 // maxUpstreamBody 限制单次上游响应体大小（8MB），避免异常响应吃满内存。
 const maxUpstreamBody = 8 << 20
 
-// clientSnapshot 是 /server/ping 与 /login/info 共用的登录态快照。
+// clientSnapshot 是 /server/ping、/server/state 与 /login/info 共用的登录态快照。
 type clientSnapshot struct {
-	LoggedIn   bool   `json:"logged_in"`
+	// LoggedIn 表示「本地持有登录票据」（有 SUB/SUBP）。离线时也为 true，
+	// 这样界面能照常显示账号，只是请求会失败。
+	LoggedIn bool `json:"logged_in"`
+	// Verified 表示「上游 /api/config 确认过登录态」。Cookie 过期或访问不到
+	// 微博时为 false —— 电脑端导入后要靠它判断是否真的生效。
+	Verified   bool   `json:"verified"`
 	UID        int64  `json:"uid"`
 	ScreenName string `json:"screen_name"`
 	Avatar     string `json:"avatar"`
@@ -302,6 +307,7 @@ func (c *WeiboClient) snapshot() clientSnapshot {
 	uidNum, _ := strconv.ParseInt(c.uidValue, 10, 64)
 	return clientSnapshot{
 		LoggedIn:   c.loggedIn || c.subValue != "" || c.subpValue != "",
+		Verified:   c.loggedIn,
 		UID:        uidNum,
 		ScreenName: c.screenName,
 		Avatar:     c.avatar,

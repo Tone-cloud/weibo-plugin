@@ -10,7 +10,9 @@ func setupRoutes(mux *http.ServeMux) {
 	// ---- 元信息 ----
 	mux.HandleFunc("/", handleRoot)
 	mux.HandleFunc("/server/ping", handlePing)
+	mux.HandleFunc("/server/state", handleServerState)
 	mux.HandleFunc("/config", handleConfig)
+	mux.HandleFunc("/config/import", handleConfigImport)
 
 	// ---- 信息流 ----
 	mux.HandleFunc("/feed/home", handleFeedHome)

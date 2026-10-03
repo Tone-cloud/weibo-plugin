@@ -96,9 +96,31 @@ func filterCookies(list []storedCookie) []storedCookie {
 	return out
 }
 
+// utf8BOM 是 UTF-8 字节序标记。Windows 记事本/PowerShell 5.1 的
+// `Set-Content -Encoding UTF8` 都会写上它，而 encoding/json 遇到 BOM 会直接
+// 报 "invalid character 'ï'"。用户手动编辑 cookies.json 太常见了，
+// 所以这里统一先剥掉。
+var utf8BOM = []byte{0xEF, 0xBB, 0xBF}
+
+// stripBOM 去掉开头的 UTF-8 BOM（没有则原样返回）。
+func stripBOM(raw []byte) []byte {
+	return bytes.TrimPrefix(raw, utf8BOM)
+}
+
 // loadCookies 读取持久化 Cookie；文件不存在时返回空列表而不是错误。
 func loadCookies() ([]storedCookie, error) {
-	path := cookieStorePath()
+	return readCookieFile(cookieStorePath())
+}
+
+// readCookieFile 从指定路径读取 Cookie（loadCookies 的带参版本，供监听使用）。
+//
+// 兼容三种写法：
+//  1. {"cookies":[{name,value,domain,path}], "updated_at":0}   ← 规范格式
+//  2. [{"name":"SUB","value":"..."}]                          ← 裸数组
+//  3. 空文件 / 不存在                                          ← 空列表
+//
+// 另外容忍开头带 UTF-8 BOM（记事本存过的文件）。
+func readCookieFile(path string) ([]storedCookie, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -106,6 +128,7 @@ func loadCookies() ([]storedCookie, error) {
 		}
 		return nil, err
 	}
+	raw = stripBOM(raw)
 	if len(bytes.TrimSpace(raw)) == 0 {
 		return []storedCookie{}, nil
 	}
@@ -147,6 +170,8 @@ func saveCookies(list []storedCookie) error {
 		_ = os.Remove(tmp)
 		return err
 	}
+	// 自己写的文件：同步监听指纹，免得被当成外部改动再处理一遍
+	noteCookieFileWritten()
 	return nil
 }
 
@@ -156,5 +181,6 @@ func clearCookies() error {
 	if err != nil && !os.IsNotExist(err) {
 		return err
 	}
+	noteCookieFileWritten()
 	return nil
 }

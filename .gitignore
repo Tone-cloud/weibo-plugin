@@ -18,7 +18,9 @@ build/linux/
 # ---- go ----
 # Go 产物：仓库根目录的 server（交叉编译到设备）与 server_host.exe（本机调试）
 /server
+/server_host
 /server_host.exe
+/server_test
 /server_test.exe
 go_server/server
 go_server/server_arm
@@ -26,6 +28,9 @@ go_server/server_arm
 .gocache/
 .gopath/
 *.test
+
+# ---- 集成测试的临时目录（tools/test_*.py / tools/test_*.ps1 会用）----
+.testtmp/
 
 # ---- local state (DO NOT COMMIT: contains login cookies) ----
 cookies.json

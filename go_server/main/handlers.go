@@ -1,6 +1,10 @@
 package main
 
-import "net/http"
+import (
+	"bytes"
+	"io"
+	"net/http"
+)
 
 // ============================================================================
 // 路由处理器：每个 SPEC 第 4 节的路由一个 handleXxx。
@@ -548,5 +552,37 @@ func handleLoginInfo(w http.ResponseWriter, r *http.Request) {
 func handleLogout(w http.ResponseWriter, r *http.Request) {
 	handleAPI(w, r, http.MethodPost, func(req *http.Request) (map[string]any, error) {
 		return logout()
+	})
+}
+
+// handleConfigImport POST /config/import —— 电脑端把 cookies.json 直接发过来。
+//
+// 请求体支持四种写法（见 importCookiesJSON）：
+//
+//	{"cookies":[{...}]}  /  [{...}]  /  {"cookie":"SUB=..."}  /  "SUB=..."
+//
+// 导入后立即落盘到插件目录，设备侧无需任何操作即可自动生效。
+func handleConfigImport(w http.ResponseWriter, r *http.Request) {
+	handleAPI(w, r, http.MethodPost, func(req *http.Request) (map[string]any, error) {
+		// 256 KiB 足够放几百条 Cookie，同时挡住异常大的请求体
+		raw, err := io.ReadAll(io.LimitReader(req.Body, 256*1024))
+		if err != nil {
+			return nil, errBadRequest("读取请求体失败")
+		}
+		if len(bytes.TrimSpace(raw)) == 0 {
+			return nil, errBadRequest("请求体为空")
+		}
+		return importCookiesJSON(raw)
+	})
+}
+
+// handleServerState GET /server/state —— 纯本地状态快照，**不请求上游**。
+//
+// C++ 侧每几秒轮询一次，用来发现「电脑端刚把 Cookie 导进来了」。
+// 之所以不复用 /config：那个接口会顺带请求 m.weibo.cn/api/config，
+// 每几秒打一次上游容易被风控。
+func handleServerState(w http.ResponseWriter, r *http.Request) {
+	handleAPI(w, r, http.MethodGet, func(req *http.Request) (map[string]any, error) {
+		return localState()
 	})
 }

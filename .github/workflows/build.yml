@@ -22,10 +22,7 @@ on:
 
 jobs:
   # ------------------------------------------------------------------
-  # 0) 结构 / 契约静态校验（秒级，先跑，挡掉低级错误）
-  #    metadata ↔ 打包布局、qmldir ↔ 实际文件、.pro ↔ 源文件、
-  #    Q_INVOKABLE/Q_PROPERTY 定义、Go 只允许标准库、路由 ↔ SPEC 对齐。
-  # ------------------------------------------------------------------
+  # 0) 缁撴瀯 / 濂戠害闈欐€佹牎楠岋紙绉掔骇锛屽厛璺戯紝鎸℃帀浣庣骇閿欒锛?  #    metadata 鈫?鎵撳寘甯冨眬銆乹mldir 鈫?瀹為檯鏂囦欢銆?pro 鈫?婧愭枃浠躲€?  #    Q_INVOKABLE/Q_PROPERTY 瀹氫箟銆丟o 鍙厑璁告爣鍑嗗簱銆佽矾鐢?鈫?SPEC 瀵归綈銆?  # ------------------------------------------------------------------
   verify:
     name: Static contract check
     runs-on: ubuntu-latest
@@ -38,16 +35,15 @@ jobs:
 
       - name: Run tools/go_lint.py
         run: |
-          # 无工具链时的 Go 兜底体检：未使用的 import / 未使用的局部变量 /
-          # 跨文件未定义标识符。真正的编译在 build-server job 里做。
-          python3 tools/go_lint.py | tee /tmp/golint.txt
-          if grep -q '^   调用了未定义的' /tmp/golint.txt; then
-            echo "FATAL: go_lint.py 发现未定义的调用"; exit 1
+          # 鏃犲伐鍏烽摼鏃剁殑 Go 鍏滃簳浣撴锛氭湭浣跨敤鐨?import / 鏈娇鐢ㄧ殑灞€閮ㄥ彉閲?/
+          # 璺ㄦ枃浠舵湭瀹氫箟鏍囪瘑绗︺€傜湡姝ｇ殑缂栬瘧鍦?build-server job 閲屽仛銆?          python3 tools/go_lint.py | tee /tmp/golint.txt
+          if grep -q '^   璋冪敤浜嗘湭瀹氫箟鐨? /tmp/golint.txt; then
+            echo "FATAL: go_lint.py 鍙戠幇鏈畾涔夌殑璋冪敤"; exit 1
           fi
 
   # ------------------------------------------------------------------
-  # 1) 交叉编译 libweibo_plugin.so
-  #    环境与 Tone-cloud/netease-music 完全一致：
+  # 1) 浜ゅ弶缂栬瘧 libweibo_plugin.so
+  #    鐜涓?Tone-cloud/netease-music 瀹屽叏涓€鑷达細
   #      qt-5.15.2-for-aarch64-dictpen-linux
   #      aarch64-dictpen-linux-gnu-gcc-toolchain
   #      dictpen-libs
@@ -138,18 +134,15 @@ jobs:
       - name: Dereference version suffix and strip
         run: |
           set -euo pipefail
-          # qmake 默认会给共享库加 1.0.0 版本后缀，产出
-          #   build/libweibo_plugin.so -> libweibo_plugin.so.1.0.0
-          # 插件目录里要的是一个普通文件，所以这里先解引用软链再 strip，
-          # 后面的 ABI 校验 / 上传都作用在真实文件上。
-          echo "=== qmake 刚产出时 ==="
+          # qmake 榛樿浼氱粰鍏变韩搴撳姞 1.0.0 鐗堟湰鍚庣紑锛屼骇鍑?          #   build/libweibo_plugin.so -> libweibo_plugin.so.1.0.0
+          # 鎻掍欢鐩綍閲岃鐨勬槸涓€涓櫘閫氭枃浠讹紝鎵€浠ヨ繖閲屽厛瑙ｅ紩鐢ㄨ蒋閾惧啀 strip锛?          # 鍚庨潰鐨?ABI 鏍￠獙 / 涓婁紶閮戒綔鐢ㄥ湪鐪熷疄鏂囦欢涓娿€?          echo "=== qmake 鍒氫骇鍑烘椂 ==="
           ls -lh build/
           cp -L build/libweibo_plugin.so build/libweibo_plugin.plain.so
           rm -f build/libweibo_plugin.so build/libweibo_plugin.so.1 \
                 build/libweibo_plugin.so.1.0 build/libweibo_plugin.so.1.0.0
           mv build/libweibo_plugin.plain.so build/libweibo_plugin.so
           aarch64-dictpen-linux-gnu-strip --strip-unneeded build/libweibo_plugin.so
-          echo "=== 解引用 + strip 之后 ==="
+          echo "=== 瑙ｅ紩鐢?+ strip 涔嬪悗 ==="
           ls -lh build/libweibo_plugin.so
           file build/libweibo_plugin.so
 
@@ -157,23 +150,22 @@ jobs:
         run: |
           set -euo pipefail
           SO=build/libweibo_plugin.so
-          # 上一步已经把软链解引用成真实文件了，这里必须确认它不是符号链接
-          if [ -L "$SO" ]; then echo "FATAL: $SO 仍然是符号链接"; exit 1; fi
+          # 涓婁竴姝ュ凡缁忔妸杞摼瑙ｅ紩鐢ㄦ垚鐪熷疄鏂囦欢浜嗭紝杩欓噷蹇呴』纭瀹冧笉鏄鍙烽摼鎺?          if [ -L "$SO" ]; then echo "FATAL: $SO 浠嶇劧鏄鍙烽摼鎺?; exit 1; fi
           test -f "$SO"
           echo "=== file ==="; file "$SO"
-          echo "=== 必须是 aarch64 共享库 ==="
-          file "$SO" | grep -qE 'aarch64|ARM aarch64' || { echo "FATAL: 不是 aarch64 产物"; exit 1; }
+          echo "=== 蹇呴』鏄?aarch64 鍏变韩搴?==="
+          file "$SO" | grep -qE 'aarch64|ARM aarch64' || { echo "FATAL: 涓嶆槸 aarch64 浜х墿"; exit 1; }
           echo "=== exported PenMods entry points ==="
           if command -v aarch64-dictpen-linux-gnu-nm >/dev/null 2>&1; then
             aarch64-dictpen-linux-gnu-nm -D --defined-only "$SO" \
               | tee /tmp/syms.txt \
               | grep -E 'init_plugin|attach_engine|destroy_plugin'
           else
-            echo "toolchain nm 不存在，回落到 strings"
+            echo "toolchain nm 涓嶅瓨鍦紝鍥炶惤鍒?strings"
             strings "$SO" | grep -xE 'init_plugin|attach_engine|destroy_plugin' | tee /tmp/syms.txt
           fi
           for sym in init_plugin attach_engine destroy_plugin; do
-            grep -q "$sym" /tmp/syms.txt || { echo "FATAL: $sym 未导出"; exit 1; }
+            grep -q "$sym" /tmp/syms.txt || { echo "FATAL: $sym 鏈鍑?; exit 1; }
           done
           echo "=== qml entry present in package? ==="
           test -f qml/main.qml && echo "qml/main.qml OK"
@@ -186,7 +178,7 @@ jobs:
           if-no-files-found: error
 
   # ------------------------------------------------------------------
-  # 2) 编译 Go sidecar（server, linux/arm64, 纯静态）
+  # 2) 缂栬瘧 Go sidecar锛坰erver, linux/arm64, 绾潤鎬侊級
   # ------------------------------------------------------------------
   build-server:
     name: Build Go sidecar (linux/arm64)
@@ -207,16 +199,15 @@ jobs:
         run: |
           go mod tidy
           if [ -s go.sum ]; then
-            echo "go.sum is not empty — third-party deps are not allowed:"; cat go.sum; exit 1
+            echo "go.sum is not empty 鈥?third-party deps are not allowed:"; cat go.sum; exit 1
           fi
           go vet ./...
 
       - name: Build server
         working-directory: go_server/main
         run: |
-          # 产物放在**仓库根目录** server —— 与 cc\netease 的 build_server.ps1 /
-          # package.ps1 约定一致（插件根目录下的可执行文件名固定为 server）。
-          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 \
+          # 浜х墿鏀惧湪**浠撳簱鏍圭洰褰?* server 鈥斺€?涓?cc\netease 鐨?build_server.ps1 /
+          # package.ps1 绾﹀畾涓€鑷达紙鎻掍欢鏍圭洰褰曚笅鐨勫彲鎵ц鏂囦欢鍚嶅浐瀹氫负 server锛夈€?          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 \
             go build -trimpath -ldflags="-s -w" -o ../../server .
           chmod +x ../../server
           ls -lh ../../server
@@ -239,6 +230,20 @@ jobs:
           grep -q '"ok":true' /tmp/ping.json || { echo "ping failed"; cat /tmp/server.log; exit 1; }
           grep -q '"code":0' /tmp/ping.json || { echo "envelope wrong"; cat /tmp/ping.json; exit 1; }
 
+      - name: Auto-import integration tests (pen-push.ps1 + file watcher + BOM)
+        working-directory: go_server/main
+        run: |
+          set -euo pipefail
+          # host 版 sidecar，拿来当「假设备」，验证电脑端导入的完整链路
+          CGO_ENABLED=0 GOOS=linux GOARCH=$(go env GOARCH) go build -o ../../server_host .
+          cd "$GITHUB_WORKSPACE"
+
+          echo "=== tools/test_autoimport.py：/config/import + 文件监听 + BOM + 错误分支 ==="
+          python3 tools/test_autoimport.py ./server_host
+
+          echo "=== tools/test_penpush.ps1：电脑端工具全链路 ==="
+          pwsh -NoProfile -File tools/test_penpush.ps1 -Exe ./server_host
+
       - name: Upload server
         uses: actions/upload-artifact@v4
         with:
@@ -247,7 +252,7 @@ jobs:
           if-no-files-found: error
 
   # ------------------------------------------------------------------
-  # 3) 打包成可直接解压到设备的 zip（平铺布局，与 netease 的 package.ps1 一致）
+  # 3) 鎵撳寘鎴愬彲鐩存帴瑙ｅ帇鍒拌澶囩殑 zip锛堝钩閾哄竷灞€锛屼笌 netease 鐨?package.ps1 涓€鑷达級
   # ------------------------------------------------------------------
   package:
     name: Package com.weibopocket.client.zip
@@ -272,35 +277,32 @@ jobs:
       - name: Stage runtime files
         run: |
           set -euo pipefail
-          # metadata.json 的 main_so 是 "libweibo_plugin.so"，也就是插件根目录下的
-          # 文件名。artifact 解到 build/ 之后要先搬到根目录，后面的校验才说得通。
-          cp -L build/libweibo_plugin.so ./libweibo_plugin.so
+          # metadata.json 鐨?main_so 鏄?"libweibo_plugin.so"锛屼篃灏辨槸鎻掍欢鏍圭洰褰曚笅鐨?          # 鏂囦欢鍚嶃€俛rtifact 瑙ｅ埌 build/ 涔嬪悗瑕佸厛鎼埌鏍圭洰褰曪紝鍚庨潰鐨勬牎楠屾墠璇村緱閫氥€?          cp -L build/libweibo_plugin.so ./libweibo_plugin.so
           chmod +x ./libweibo_plugin.so ./server
           ls -lh libweibo_plugin.so server
 
       - name: Validate layout before zipping
         run: |
           set -euo pipefail
-          test -f libweibo_plugin.so           || { echo "缺少 libweibo_plugin.so"; exit 1; }
-          test -f server                       || { echo "缺少 server"; exit 1; }
-          test -f qml/main.qml                 || { echo "缺少 qml/main.qml"; exit 1; }
-          test -f metadata.json                || { echo "缺少 metadata.json"; exit 1; }
-          test -f icon.png                     || { echo "缺少 icon.png"; exit 1; }
-          test -f cookies.example.json         || { echo "缺少 cookies.example.json"; exit 1; }
-          echo "=== file 类型确认 ==="
+          test -f libweibo_plugin.so           || { echo "缂哄皯 libweibo_plugin.so"; exit 1; }
+          test -f server                       || { echo "缂哄皯 server"; exit 1; }
+          test -f qml/main.qml                 || { echo "缂哄皯 qml/main.qml"; exit 1; }
+          test -f metadata.json                || { echo "缂哄皯 metadata.json"; exit 1; }
+          test -f icon.png                     || { echo "缂哄皯 icon.png"; exit 1; }
+          test -f cookies.example.json         || { echo "缂哄皯 cookies.example.json"; exit 1; }
+          echo "=== file 绫诲瀷纭 ==="
           file ./libweibo_plugin.so ./server
           file ./libweibo_plugin.so | grep -qE 'aarch64|ARM aarch64' \
-            || { echo "FATAL: libweibo_plugin.so 不是 aarch64"; exit 1; }
+            || { echo "FATAL: libweibo_plugin.so 涓嶆槸 aarch64"; exit 1; }
           file ./server | grep -qE 'aarch64|ARM aarch64' \
-            || { echo "FATAL: server 不是 aarch64"; exit 1; }
-          # metadata.json 声明的入口必须真实存在
-          python3 - <<'PY'
+            || { echo "FATAL: server 涓嶆槸 aarch64"; exit 1; }
+          # metadata.json 澹版槑鐨勫叆鍙ｅ繀椤荤湡瀹炲瓨鍦?          python3 - <<'PY'
           import json, os, sys
           meta = json.load(open('metadata.json', encoding='utf-8'))
           for key in ('main_qml', 'main_so'):
               p = meta[key]
               if not os.path.exists(p):
-                  sys.exit(f'metadata.json {key} -> {p} 不存在')
+                  sys.exit(f'metadata.json {key} -> {p} 涓嶅瓨鍦?)
               print(f'OK {key}: {p}')
           print('OK id:', meta['id'])
           PY
@@ -310,28 +312,26 @@ jobs:
           set -euo pipefail
           ZIP=com.weibopocket.client.zip
           rm -f "$ZIP"
-          # -j 去掉路径前缀：文件位于 zip 根目录，解压即插件根目录（同 netease）
-          zip -j -q "$ZIP" metadata.json server icon.png README.md cookies.example.json libweibo_plugin.so
-          # qml 目录保留 qml/ 前缀
+          # -j 鍘绘帀璺緞鍓嶇紑锛氭枃浠朵綅浜?zip 鏍圭洰褰曪紝瑙ｅ帇鍗虫彃浠舵牴鐩綍锛堝悓 netease锛?          zip -j -q "$ZIP" metadata.json server icon.png README.md cookies.example.json libweibo_plugin.so
+          # qml 鐩綍淇濈暀 qml/ 鍓嶇紑
           zip -r -q "$ZIP" qml
           ls -lh "$ZIP"
-          echo "=== zip 内容（前 25 项） ==="
+          echo "=== zip 鍐呭锛堝墠 25 椤癸級 ==="
           unzip -l "$ZIP" | head -25
-          # 交叉验证：zip 里必须有 metadata 声明的入口
-          python3 - "$ZIP" <<'PY'
+          # 浜ゅ弶楠岃瘉锛歾ip 閲屽繀椤绘湁 metadata 澹版槑鐨勫叆鍙?          python3 - "$ZIP" <<'PY'
           import json, sys, zipfile
           names = set(zipfile.ZipFile(sys.argv[1]).namelist())
           meta = json.load(open('metadata.json', encoding='utf-8'))
           for key in ('main_qml', 'main_so'):
               want = meta[key]
-              assert want in names, f'zip 内缺少 {key} -> {want}'
+              assert want in names, f'zip 鍐呯己灏?{key} -> {want}'
               print(f'OK zip {key}: {want}')
-          assert 'server' in names, 'zip 内缺少 server'
-          assert 'qml/components/Theme.qml' in names, 'zip 内缺少 qml/components/Theme.qml'
-          # 条目名必须是正斜杠：反斜杠在 Linux 上会被当成普通文件名字符
+          assert 'server' in names, 'zip 鍐呯己灏?server'
+          assert 'qml/components/Theme.qml' in names, 'zip 鍐呯己灏?qml/components/Theme.qml'
+          # 鏉＄洰鍚嶅繀椤绘槸姝ｆ枩鏉狅細鍙嶆枩鏉犲湪 Linux 涓婁細琚綋鎴愭櫘閫氭枃浠跺悕瀛楃
           bad = [n for n in names if '\\' in n]
-          assert not bad, f'zip 里有反斜杠条目名（Linux 解压会失败）: {bad[:3]}'
-          print(f'OK zip 共 {len(names)} 项，无反斜杠条目')
+          assert not bad, f'zip 閲屾湁鍙嶆枩鏉犳潯鐩悕锛圠inux 瑙ｅ帇浼氬け璐ワ級: {bad[:3]}'
+          print(f'OK zip 鍏?{len(names)} 椤癸紝鏃犲弽鏂滄潬鏉＄洰')
           PY
 
       - name: Upload zip

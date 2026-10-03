@@ -76,16 +76,76 @@ qml/fonts/weibo.ttf        ← 推荐：自己放一个中文字体进来
 
 ### 登录
 
-微博没有可用的开放扫码登录，因此本插件走 **Cookie 导入**：
+微博没有可用的开放扫码登录，因此本插件走 **Cookie 导入**。
+
+**推荐做法：在电脑上完成，词典笔上零操作。**
 
 1. 电脑浏览器登录 `https://weibo.com`
-2. F12 → Application → Cookies → `https://weibo.com`
-3. 复制 `SUB` 与 `SUBP` 两个值
-4. 插件内：我的 → 登录 / 导入 Cookie，粘贴成：
+2. F12 → Application → Cookies → `https://weibo.com`，复制 `SUB` 与 `SUBP` 的值
+3. 在电脑上运行（`C:\Users\aresi\Desktop\cc\weibo_plugin`）：
 
-```text
-SUB=xxxxx; SUBP=yyyyy
+```powershell
+# PowerShell 默认策略是 Restricted，必须显式 Bypass
+powershell -NoProfile -ExecutionPolicy Bypass -File tools\pen-push.ps1 `
+    -Cookie "SUB=xxxxx; SUBP=yyyyy"
 ```
+
+就这一步。脚本会校验 Cookie、生成 `cookies.json`，然后按
+**盘符 → adb → 网络** 的顺序自动送到词典笔：
+
+```
+==> 使用命令行传入的 Cookie
+    解析出 2 条 Cookie：SUB, SUBP
+    已写出 ...\cookies.json（2 条，无 BOM）
+==> adb: %LOCALAPPDATA%\PenManager\adb.exe
+    使用设备: xxxxxxxx
+==> 推送到 /userdisk/PenMods/plugins/weibo_plugin/cookies.json
+    完成。设备侧 sidecar 每 2 秒检查一次文件变化，会自动加载；
+    插件界面上不需要任何操作，几秒后「我的」页就会出现昵称。
+```
+
+送达方式可以显式指定：`-Method auto|usb|adb|http`。
+走网络（同一局域网）时需要在笔上用 `WEIBO_BIND=0.0.0.0` 启动 sidecar：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File tools\pen-push.ps1 `
+    -Cookie "SUB=..." -Method http -Pen 192.168.1.23
+```
+
+其它用法：
+
+```powershell
+# 从文本文件读（文件里放一行 Cookie 头）
+... -CookieFile .\cookie.txt
+# 已经有 cookies.json，直接推送
+... -Json .\cookies.json
+# 只看会做什么，不推送到设备
+... -Cookie "SUB=..." -DryRun
+# 把笔上现有的 cookies.json 拉回来编辑（改完再用 -Json 推回去）
+... -Pull .\cookies-from-pen.json
+# 其它插件也能用这个脚本
+... -Cookie "..." -PluginName bili_plugin
+```
+
+为什么导入后笔上不用点任何东西：
+
+| 机制 | 说明 |
+|------|------|
+| sidecar 文件监听 | 每 2 秒 stat 一次 `cookies.json`，一变就自动重新加载并校验 |
+| `GET /server/state` | 纯本地快照、**不请求微博**，所以插件可以放心高频轮询 |
+| 插件 4 秒轮询 | 发现「已登录且校验通过」就自动更新界面并弹一条提示 |
+
+> 不想用脚本也行：把 `cookies.json` 用 PenManager / 文件管理器丢进
+> `/userdisk/PenMods/plugins/weibo_plugin/` 即可 —— 效果完全一样，
+> 文件监听会自动加载。文件格式见 `cookies.example.json`，
+> 开头带不带 UTF-8 BOM 都能识别。
+
+**在笔上手动粘贴**（不推荐，屏幕太小容易输错）：
+我的 → 登录 / 导入 Cookie，粘贴 `SUB=…; SUBP=…`。
+
+> 判断是否真的登录成功：`verified` 才代表微博确认过。Cookie 过期时脚本会提示
+> 「Cookie 已保存，但未通过登录校验」——文件已经存进去了，等你在电脑上换一份
+> 新的再推一次即可，不需要在笔上删旧文件。
 
 Cookie 由 Go sidecar 持久化到
 `/userdisk/PenMods/plugins/weibo_plugin/cookies.json`（**已在 `.gitignore` 中排除**）。
@@ -309,8 +369,12 @@ weibo_plugin/
 │   ├── build.sh               # Linux 编译 server（→ 仓库根目录 server）
 │   └── main/                  # 本地 API 服务（Go 标准库 only，21 个 .go）
 ├── tools/
-│   ├── verify.py              # 结构 / 契约静态校验（17 项，CI 第一个 job）
-│   └── go_lint.py             # Go 兜底：未用 import / 未用局部变量 / 未定义调用
+│   ├── verify.py              # 结构 / 契约静态校验（19 项，CI 第一个 job）
+│   ├── go_lint.py             # Go 兜底：未用 import / 未用局部变量 / 未定义调用
+│   ├── lambda_this.py         # lambda 缺 this 侦测
+│   ├── pen-push.ps1           # 电脑端：生成 cookies.json 并自动送入词典笔
+│   ├── test_autoimport.py     # 集成测试（sidecar 侧，不需要真机）
+│   └── test_penpush.ps1       # 集成测试（电脑端工具全链路）
 ├── docs/
 │   ├── SPEC.md                # HTTP + C++ + 构建契约
 │   └── QML-CONTRACT.md        # QML 组件 / 页面 / 角色名契约
@@ -334,22 +398,39 @@ weibo_plugin/
 
 ```bash
 python3 tools/verify.py          # 0 错误才算通过（CI 第一个 job）
-python3 tools/verify.py --fix    # 顺带规范化 QML 模块布局 / 补齐 import
+python3 tools/verify.py --fix    # 顺带规范化 QML 模块布局 / 补齐 import / 修 BOM
 python3 tools/go_lint.py         # Go 专用兜底：未用 import / 未用局部变量 / 未定义调用
 ```
 
-`verify.py` 检查 15 类问题：metadata ↔ 打包布局、`weibo_plugin.pro` ↔ 源文件、
+### 集成测试（不需要真实词典笔）
+
+在本机跑一个 host 版 sidecar 当「假设备」，验证电脑端导入的完整链路：
+
+```bash
+cd go_server/main && CGO_ENABLED=0 go build -o ../../server_host . && cd ../..
+
+python3 tools/test_autoimport.py            # sidecar 侧：/config/import、文件监听、BOM、错误分支
+powershell -NoProfile -ExecutionPolicy Bypass -File tools/test_penpush.ps1   # 电脑端工具全链路
+```
+
+`test_penpush.ps1` 里 adb 那一条只测**安全护栏**（用不存在的序列号），
+不会去碰你真实连接的手机/设备。
+
+`verify.py` 检查 19 类问题：metadata ↔ 打包布局、`weibo_plugin.pro` ↔ 源文件、
 `components/qmldir` ↔ 实际组件文件、QML 括号与根元素、每个页面有 `controller`、
 每个用到 `Theme`/组件的页面有正确的 import、QML 相对路径（import / `source:`）
 能解析到真实文件、C++ 头文件声明的函数在 `.cpp` 里都有定义、
 头文件声明与 `.cpp` 定义的参数个数 / `const` 一致、重复定义（链接错误）、
 每个 `Q_INVOKABLE` / `Q_PROPERTY READ` 都有定义、QML 里
-`controller.<模块>.<方法>()` 调用 ↔ 头文件对账、Go 只用标准库、
+`controller.<模块>.<方法>()` 调用 ↔ 头文件对账、`model.<角色>` ↔ `roleNames()`、
+most vexing parse（CI 真实踩过的编译错误）、lambda 缺 `this`（同上）、
+`.ps1` 的 UTF-8 BOM 策略、Go 只用标准库、
 `routes.go` ↔ `docs/SPEC.md` 路由对齐、workflow YAML 结构。
 
 > 它们**不能**替代编译，但能挡住绝大多数"编译通过、上机才报错"的问题 —— 尤其是
 > QML 调用 C++ 方法名写错（`Property 'xxx' is not a function`）、
-> Theme 单例因模块布局不对而不可见、以及 C++ 声明/定义签名漂移。
+> Theme 单例因模块布局不对而不可见、C++ 声明/定义签名漂移，
+> 以及 most vexing parse / lambda 漏捕获 `this` 这两类**只有编译器才会发现**的错误。
 
 ---
 

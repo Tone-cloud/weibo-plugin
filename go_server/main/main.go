@@ -25,10 +25,16 @@ func main() {
 	if port == "" {
 		port = defaultPort
 	}
-	host := "127.0.0.1"
-	if DEBUG {
-		// 调试时监听所有网卡，方便桌面浏览器直接访问。
-		host = "0.0.0.0"
+	// 监听地址优先级：WEIBO_BIND > DEBUG > 仅本机。
+	// 电脑端要 POST /config/import 就必须监听 0.0.0.0（WEIBO_BIND=0.0.0.0）。
+	host := strings.TrimSpace(os.Getenv("WEIBO_BIND"))
+	if host == "" {
+		if DEBUG {
+			// 调试时监听所有网卡，方便桌面浏览器/脚本直接访问。
+			host = "0.0.0.0"
+		} else {
+			host = "127.0.0.1"
+		}
 	}
 	addr := host + ":" + port
 
@@ -53,9 +59,22 @@ func main() {
 		os.Exit(1)
 	}
 	logSuccess("server 已就绪：http://%s（版本 %s）", addr, appVersion)
+	// 这两行用 logPlain 而不是 logInfo：它们是「电脑端怎么连过来」的操作指引，
+	// logInfo 只在 DEBUG=true 时可见，那样用户根本看不到地址。
+	if host == "0.0.0.0" {
+		for _, ip := range lanIPv4() {
+			logPlain(" 局域网可访问：http://%s:%s（电脑端导入用这个地址）", ip, port)
+		}
+	} else {
+		logPlain(" 只监听本机；如需从电脑导入 Cookie，用 WEIBO_BIND=0.0.0.0 启动")
+	}
 
 	// 端口已就绪，登录态初始化放到后台，避免拖慢 C++ 的探测。
 	go client.Init()
+
+	// 监听 cookies.json 的外部改动（adb push / PenManager 传文件 / 挂载 U 盘写入），
+	// 改动后自动应用到运行中的 client —— 电脑端传完即可用，笔上无需任何操作。
+	go startCookieWatcher(cookieWatchInterval)
 
 	serveErr := make(chan error, 1)
 	go func() {
@@ -91,6 +110,8 @@ func printBanner(addr string) {
 	logPlain(" 调试模式 : %v", DEBUG)
 	logPlain(" Cookie   : %s", cookieStorePath())
 	logPlain(" 历史文件 : %s", searchHistoryPath())
+	logPlain(" 自动导入 : 电脑端改完 cookies.json（adb push / 挂载 / HTTP POST")
+	logPlain("            /config/import）会在 %s 内自动生效，笔上无需操作", cookieWatchInterval)
 	logPlain("----------------------------------------------------------")
 	for _, line := range startupEndpoints {
 		logPlain(" %s", line)

@@ -36,7 +36,9 @@ var cookieProbeURLs = []string{
 var rootEndpoints = []string{
 	"GET    /                         接口索引",
 	"GET    /server/ping              sidecar 存活探测",
+	"GET    /server/state             本地状态快照（不请求上游，供自动导入轮询）",
 	"GET    /config                   登录态与用户摘要",
+	"POST   /config/import            直接导入 cookies.json（电脑端自动导入用）",
 	"GET    /feed/home                首页推荐流（since_id, fresh_type）",
 	"GET    /feed/follow              关注流（since_id）",
 	"GET    /feed/group               分组流（gid, since_id）",
@@ -94,4 +96,5 @@ var startupEndpoints = []string{
 	"超话：   /topic/detail  /topic/statuses  /topic/checkin  /topic/checkin/all  /topic/search",
 	"媒体：   /media/info",
 	"登录：   /login/import  /login/info  /logout  /config  /server/ping",
+	"自动导入： POST /config/import（电脑端发 cookies.json）  GET /server/state（本地快照）",
 }
