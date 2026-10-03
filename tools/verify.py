@@ -811,6 +811,14 @@ def _split_top_level(params: str) -> list[str]:
     return out
 
 
+# Qt 宏：跨行折叠后很容易被「声明提取」正则误当成方法名
+QT_MACROS = {
+    "Q_PROPERTY", "Q_INVOKABLE", "Q_ENUM", "Q_ENUMS", "Q_OBJECT", "Q_GADGET",
+    "Q_SIGNALS", "Q_SIGNAL", "Q_SLOTS", "Q_SLOT", "Q_FLAG", "Q_FLAGS",
+    "Q_DECLARE_METATYPE", "Q_DISABLE_COPY", "Q_NODISCARD_CTOR",
+}
+
+
 def _header_declarations(hsrc: str) -> dict[tuple[str, str], tuple[int, bool]]:
     """从类头文件抽取 (类名, 方法名) -> (参数个数, 是否 const)。"""
     decls: dict[tuple[str, str], tuple[int, bool]] = {}
@@ -843,10 +851,12 @@ def _header_declarations(hsrc: str) -> dict[tuple[str, str], tuple[int, bool]]:
             body,
         ):
             ret, name, params, is_const = mm.group(1), mm.group(2), mm.group(3), mm.group(4)
-            if name in ("return", "if", "for", "while", "switch", "sizeof"):
+            if name in ("return", "if", "for", "while", "switch", "sizeof") or name in QT_MACROS:
                 continue
             ret_words = set(ret.split())
             if ret_words & {"return", "typedef", "using", "friend", "template"}:
+                continue
+            if ret.strip() in QT_MACROS or ret.strip().startswith("Q_PROPERTY"):
                 continue
             decls[(cls, name)] = (len(_split_top_level(params)), bool(is_const))
     return decls

@@ -3,10 +3,13 @@
 """自动导入（电脑端 → 词典笔）集成测试。
 
 不需要真实词典笔：在本机跑一个 host 版 sidecar 当"设备"，验证
-  * POST /config/import 的四种请求体写法
+  * POST /config/import 的四种请求体写法（自动化/脚本用）
   * 离线/校验失败时也必须落盘（这是自动导入的关键）
-  * cookies.json 被外部改动 → 文件监听 2 秒内自动加载（adb push 的路径）
+  * cookies.json 被外部改动 → 文件监听 2 秒内自动加载
   * 带 UTF-8 BOM 的文件也能读（记事本存过的）
+  * **电脑端导入页**（与 bili 的 :8666 / netease 的 :8667 同思路）：
+    GET /<token> 给页面、GET / 给占位页、POST /<token>/import 落盘、
+    GET /<token>/cookies.json 导出、token 不对时 404
   * 错误分支（空体 / 没有 SUB / 方法不对）
   * GET /server/state 只读本地缓存、不请求上游
 
@@ -27,13 +30,16 @@ import subprocess
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TMP = os.path.join(ROOT, ".testtmp")
 COOKIE = os.path.join(TMP, "cookies.json")
 PORT = 18011
+LOGIN_PORT = 18012
 BASE = f"http://127.0.0.1:{PORT}"
+LOGIN_BASE = f"http://127.0.0.1:{LOGIN_PORT}"
 
 
 def find_exe() -> str:
@@ -82,6 +88,8 @@ def main() -> int:
     env["PORT"] = str(PORT)
     env["WEIBO_COOKIE_FILE"] = COOKIE
     env["WEIBO_PLUGIN_DIR"] = TMP
+    env["WEIBO_LOGIN_PORT"] = str(LOGIN_PORT)
+    env["WEIBO_LOGIN_BIND"] = "127.0.0.1"   # 测试里只绑本机，避免防火墙弹窗
     env.pop("DEBUG", None)  # 默认只监听 127.0.0.1
 
     logf = open(LOG, "wb")
@@ -174,6 +182,67 @@ def main() -> int:
         check("GET 该路由 → 405", s == 405, b[:80])
         s, b = req("/login/import", "POST", json.dumps({"cookie": "SUB=FAKE_QML_PASTE"}))
         check("旧的 /login/import 仍兼容", s == 200 and json.loads(b)["data"].get("ok") is True)
+
+        # ---------------------------------------------------------------
+        # 8. 电脑端导入页（独立 0.0.0.0 监听，浏览器用）
+        #    与 bili 的 bili-sms:8666 / netease 的登录服务:8667 同思路
+        # ---------------------------------------------------------------
+        print("\n== 8. 电脑端导入页（独立监听）==")
+
+        def lp(path, method="GET", form=None):
+            data = urllib.parse.urlencode(form).encode() if form else None
+            r = urllib.request.Request(LOGIN_BASE + path, data=data, method=method)
+            if form is not None:
+                r.add_header("Content-Type", "application/x-www-form-urlencoded;charset=UTF-8")
+            try:
+                with urllib.request.urlopen(r, timeout=15) as resp:
+                    return resp.status, resp.read().decode("utf-8", "replace")
+            except urllib.error.HTTPError as e:
+                return e.code, e.read().decode("utf-8", "replace")
+            except Exception as e:
+                return 0, str(e)
+
+        state = json.loads(req("/server/state")[1])["data"]
+        url = state.get("login_url", "")
+        check("sidecar 上报了 login_url", bool(url), url)
+        check("上报了 lan_ips", isinstance(state.get("lan_ips"), list), state.get("lan_ips"))
+        token = url.rsplit("/", 1)[-1] if url else ""
+        check("token 长度合理（8 位十六进制）", len(token) == 8 and all(
+            c in "0123456789abcdef" for c in token), token)
+
+        s, b = lp("/" + token)
+        check("GET /<token> → 200 导入页", s == 200, f"HTTP {s}")
+        check("页面有粘贴框", "textarea" in b)
+        check("页面有提交按钮", "导入到词典笔" in b)
+        check("页面注入了 token", ('"/' + token + '"') in b or ("'/" + token + "'") in b)
+
+        s, b = lp("/")
+        check("GET / → 404 占位页（不带 token 看不到导入页）", s == 404, f"HTTP {s}")
+        check("占位页引导用户照抄完整链接", "完整链接" in b)
+        s, b = lp("/deadbeef")
+        check("GET /<错 token> → 404", s == 404, f"HTTP {s}")
+
+        s, b = lp("/" + token + "/state")
+        check("GET /<token>/state → 200", s == 200 and json.loads(b)["code"] == 0, b[:80])
+
+        s, b = lp("/" + token + "/import", "POST", {"payload": ""})
+        check("空 payload → 400", s == 400 and json.loads(b)["code"] != 0, b[:110])
+        s, b = lp("/" + token + "/import", "POST",
+                  {"payload": "SUB=FAKEPAGE1234567890; SUBP=FAKEPAGESUBP0987654321"})
+        r = json.loads(b)
+        check("POST /<token>/import → 200", s == 200 and r["code"] == 0, b[:120])
+        check("页面导入也落盘了", r["data"].get("saved") is True)
+        check("页面导入返回 verified 字段", "verified" in r["data"])
+        with open(COOKIE, encoding="utf-8") as f:
+            check("设备端 cookies.json 内容已更新",
+                  any(c["value"] == "FAKEPAGE1234567890" for c in json.load(f)["cookies"]))
+
+        s, b = lp("/" + token + "/cookies.json")
+        check("GET /<token>/cookies.json → 200", s == 200, f"HTTP {s}")
+        try:
+            check("导出的是合法 cookies.json", "cookies" in json.loads(b))
+        except Exception as exc:
+            check("导出的是合法 cookies.json", False, str(exc))
     finally:
         proc.terminate()
         try:

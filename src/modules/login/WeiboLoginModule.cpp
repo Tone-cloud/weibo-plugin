@@ -6,10 +6,12 @@
 #include "WeiboNetwork.h"
 
 #include <QDebug>
+#include <QJsonArray>
 #include <QJsonObject>
 #include <QMap>
 #include <QPointer>
 #include <QString>
+#include <QStringList>
 #include <QTimer>
 
 WeiboLoginModule::WeiboLoginModule(WeiboController *controller)
@@ -297,6 +299,25 @@ void WeiboLoginModule::pollLocalState() {
             const QString uidText = WeiboJson::str(data, "uid");
             const QString name = WeiboJson::str(data, "screen_name");
             const QString avatar = WeiboJson::str(data, "avatar");
+
+            // 导入页地址：与登录态无关，每次轮询都刷新（sidecar 可能刚起来，
+            // 或者 token 因为重启换过了）。设置页要显示给用户照抄。
+            const QString url = WeiboJson::str(data, "login_url");
+            if (url != m_loginUrl) {
+                m_loginUrl = url;
+                emit loginUrlChanged();
+            }
+            QStringList ips;
+            const QJsonArray ipArray = data.value(QStringLiteral("lan_ips")).toArray();
+            for (const QJsonValue &v : ipArray) {
+                const QString ip = v.toString();
+                if (!ip.isEmpty())
+                    ips.append(ip);
+            }
+            if (ips != m_lanIps) {
+                m_lanIps = ips;
+                emit loginUrlChanged();
+            }
 
             const bool firstSync = (m_lastLoggedIn < 0);
             const bool changed = firstSync || loggedIn != (m_lastLoggedIn == 1) ||

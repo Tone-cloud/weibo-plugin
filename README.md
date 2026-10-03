@@ -78,74 +78,65 @@ qml/fonts/weibo.ttf        ← 推荐：自己放一个中文字体进来
 
 微博没有可用的开放扫码登录，因此本插件走 **Cookie 导入**。
 
-**推荐做法：在电脑上完成，词典笔上零操作。**
+**推荐做法：在电脑浏览器里粘贴，词典笔上零操作。**
+
+和 [bili 插件](https://github.com/Lyrecoul) 的 `bili-sms:8666`、
+[netease-music](https://github.com/Tone-cloud/netease-music) 的登录服务 `:8667`
+同一思路：sidecar 单独监听一个端口给局域网，**主 API 仍然只在 `127.0.0.1`**，
+暴露出去的只有一张「粘贴 Cookie」的页面。
 
 1. 电脑浏览器登录 `https://weibo.com`
 2. F12 → Application → Cookies → `https://weibo.com`，复制 `SUB` 与 `SUBP` 的值
-3. 在电脑上运行（`C:\Users\aresi\Desktop\cc\weibo_plugin`）：
+3. **在词典笔上**：设置 → 电脑端导入 → 屏幕上会显示一条链接，例如
 
-```powershell
-# PowerShell 默认策略是 Restricted，必须显式 Bypass
-powershell -NoProfile -ExecutionPolicy Bypass -File tools\pen-push.ps1 `
-    -Cookie "SUB=xxxxx; SUBP=yyyyy"
+```text
+http://192.168.1.167:8011/5a51f58a
 ```
 
-就这一步。脚本会校验 Cookie、生成 `cookies.json`，然后按
-**盘符 → adb → 网络** 的顺序自动送到词典笔：
+4. **在电脑浏览器**打开这条链接，把 `SUB=…; SUBP=…` 粘进去（或直接选一个
+   `cookies.json` 文件），点「导入到词典笔」
 
-```
-==> 使用命令行传入的 Cookie
-    解析出 2 条 Cookie：SUB, SUBP
-    已写出 ...\cookies.json（2 条，无 BOM）
-==> adb: %LOCALAPPDATA%\PenManager\adb.exe
-    使用设备: xxxxxxxx
-==> 推送到 /userdisk/PenMods/plugins/weibo_plugin/cookies.json
-    完成。设备侧 sidecar 每 2 秒检查一次文件变化，会自动加载；
-    插件界面上不需要任何操作，几秒后「我的」页就会出现昵称。
-```
+就这两步。页面会立刻告诉你结果（`已登录：昵称` 或
+`已保存但未通过校验`），而词典笔上的界面会在 **4 秒内自动登录**，
+不需要在笔上点任何东西。
 
-送达方式可以显式指定：`-Method auto|usb|adb|http`。
-走网络（同一局域网）时需要在笔上用 `WEIBO_BIND=0.0.0.0` 启动 sidecar：
+页面还能「下载词典笔上的 cookies.json」，用来备份或换设备。
 
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File tools\pen-push.ps1 `
-    -Cookie "SUB=..." -Method http -Pen 192.168.1.23
-```
-
-其它用法：
-
-```powershell
-# 从文本文件读（文件里放一行 Cookie 头）
-... -CookieFile .\cookie.txt
-# 已经有 cookies.json，直接推送
-... -Json .\cookies.json
-# 只看会做什么，不推送到设备
-... -Cookie "SUB=..." -DryRun
-# 把笔上现有的 cookies.json 拉回来编辑（改完再用 -Json 推回去）
-... -Pull .\cookies-from-pen.json
-# 其它插件也能用这个脚本
-... -Cookie "..." -PluginName bili_plugin
-```
+> **地址怎么来的**：sidecar 会挑一个电脑最可能连上的私网地址
+> （优先 `192.168.x` → `10.x` → `172.16-31.x`，跳过 `169.254.x` 这类链路本地地址
+> 和虚拟网卡），并在启动日志里打印备用地址。链接里带 8 位一次性 token，
+> 同网段的陌生设备猜不到入口、进不了导入页；不带 token 的 `/` 只会看到一张
+> 提示页。关闭这个页面：`WEIBO_LOGIN_PORT=0`；换端口：`WEIBO_LOGIN_PORT=8012`。
 
 为什么导入后笔上不用点任何东西：
 
 | 机制 | 说明 |
 |------|------|
+| 导入页落盘 | 页面提交后服务端立刻把 Cookie 写进 `cookies.json` |
 | sidecar 文件监听 | 每 2 秒 stat 一次 `cookies.json`，一变就自动重新加载并校验 |
 | `GET /server/state` | 纯本地快照、**不请求微博**，所以插件可以放心高频轮询 |
 | 插件 4 秒轮询 | 发现「已登录且校验通过」就自动更新界面并弹一条提示 |
 
-> 不想用脚本也行：把 `cookies.json` 用 PenManager / 文件管理器丢进
-> `/userdisk/PenMods/plugins/weibo_plugin/` 即可 —— 效果完全一样，
-> 文件监听会自动加载。文件格式见 `cookies.example.json`，
-> 开头带不带 UTF-8 BOM 都能识别。
+**其它导入方式**（都走同一套自动生效机制）：
+
+```bash
+# 1) 直接把 cookies.json 丢进插件目录（PenManager / 挂载 / 文件管理器都行）
+#    /userdisk/PenMods/plugins/weibo_plugin/cookies.json
+#    格式见 cookies.example.json，开头带不带 UTF-8 BOM 都能识别
+
+# 2) 自动化 / 脚本：POST 到主 API（需要先以 WEIBO_BIND=0.0.0.0 启动）
+#    接受 cookies.json 原文 / 裸数组 / {"cookie":"SUB=..."} / 裸文本 四种写法
+curl -X POST http://<笔IP>:8010/config/import \
+     -H 'Content-Type: application/json' \
+     -d '{"cookies":[{"name":"SUB","value":"..."},{"name":"SUBP","value":"..."}]}'
+```
 
 **在笔上手动粘贴**（不推荐，屏幕太小容易输错）：
-我的 → 登录 / 导入 Cookie，粘贴 `SUB=…; SUBP=…`。
+设置 → 账号 → 导入 Cookie，粘贴 `SUB=…; SUBP=…`。
 
-> 判断是否真的登录成功：`verified` 才代表微博确认过。Cookie 过期时脚本会提示
+> 判断是否真的登录成功：`verified` 才代表微博确认过。Cookie 过期时页面会提示
 > 「Cookie 已保存，但未通过登录校验」——文件已经存进去了，等你在电脑上换一份
-> 新的再推一次即可，不需要在笔上删旧文件。
+> 新的再导入一次即可，不需要在笔上删旧文件。
 
 Cookie 由 Go sidecar 持久化到
 `/userdisk/PenMods/plugins/weibo_plugin/cookies.json`（**已在 `.gitignore` 中排除**）。
@@ -159,7 +150,9 @@ Cookie 由 Go sidecar 持久化到
     ↓ 调用
 WeiboController / modules（Qt/C++，src/）
     ↓ HTTP
-本地 Go sidecar（go_server/main，127.0.0.1:8010）
+本地 Go sidecar（go_server/main）
+  ├─ 主 API   127.0.0.1:8010      ← 只有插件自己访问
+  └─ 导入页   0.0.0.0:8011        ← 只有「粘贴 Cookie」这一张页面给局域网
     ↓
 上游 m.weibo.cn / weibo.com
 ```
@@ -369,12 +362,10 @@ weibo_plugin/
 │   ├── build.sh               # Linux 编译 server（→ 仓库根目录 server）
 │   └── main/                  # 本地 API 服务（Go 标准库 only，21 个 .go）
 ├── tools/
-│   ├── verify.py              # 结构 / 契约静态校验（19 项，CI 第一个 job）
+│   ├── verify.py              # 结构 / 契约静态校验（20 项，CI 第一个 job）
 │   ├── go_lint.py             # Go 兜底：未用 import / 未用局部变量 / 未定义调用
 │   ├── lambda_this.py         # lambda 缺 this 侦测
-│   ├── pen-push.ps1           # 电脑端：生成 cookies.json 并自动送入词典笔
-│   ├── test_autoimport.py     # 集成测试（sidecar 侧，不需要真机）
-│   └── test_penpush.ps1       # 集成测试（电脑端工具全链路）
+│   └── test_autoimport.py     # 集成测试（导入页 + 监听 + BOM，不需要真机）
 ├── docs/
 │   ├── SPEC.md                # HTTP + C++ + 构建契约
 │   └── QML-CONTRACT.md        # QML 组件 / 页面 / 角色名契约
@@ -404,19 +395,17 @@ python3 tools/go_lint.py         # Go 专用兜底：未用 import / 未用局�
 
 ### 集成测试（不需要真实词典笔）
 
-在本机跑一个 host 版 sidecar 当「假设备」，验证电脑端导入的完整链路：
+在本机跑一个 host 版 sidecar 当「假设备」，验证导入的完整链路：
 
 ```bash
 cd go_server/main && CGO_ENABLED=0 go build -o ../../server_host . && cd ../..
 
-python3 tools/test_autoimport.py            # sidecar 侧：/config/import、文件监听、BOM、错误分支
-powershell -NoProfile -ExecutionPolicy Bypass -File tools/test_penpush.ps1   # 电脑端工具全链路
+# 覆盖：导入页（token/表单/导出）、/config/import 四种请求体、文件监听、
+#       UTF-8 BOM 容忍、全部错误分支
+python3 tools/test_autoimport.py
 ```
 
-`test_penpush.ps1` 里 adb 那一条只测**安全护栏**（用不存在的序列号），
-不会去碰你真实连接的手机/设备。
-
-`verify.py` 检查 19 类问题：metadata ↔ 打包布局、`weibo_plugin.pro` ↔ 源文件、
+`verify.py` 检查 20 类问题：metadata ↔ 打包布局、`weibo_plugin.pro` ↔ 源文件、
 `components/qmldir` ↔ 实际组件文件、QML 括号与根元素、每个页面有 `controller`、
 每个用到 `Theme`/组件的页面有正确的 import、QML 相对路径（import / `source:`）
 能解析到真实文件、C++ 头文件声明的函数在 `.cpp` 里都有定义、

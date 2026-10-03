@@ -2,6 +2,7 @@
 
 #include <QObject>
 #include <QString>
+#include <QStringList>
 
 class QTimer;
 class WeiboController;
@@ -16,6 +17,12 @@ class WeiboController;
 // 无论哪条路径，笔上都不需要任何触屏操作。
 class WeiboLoginModule : public QObject {
     Q_OBJECT
+    // 电脑端导入页地址（由 sidecar 的 /server/state 上报，形如
+    // http://192.168.1.23:8011/<token>）。设置页直接显示这个链接，
+    // 用户在电脑浏览器打开它、粘贴 Cookie 即可，笔上不用打字。
+    Q_PROPERTY(QString loginUrl READ loginUrl NOTIFY loginUrlChanged)
+    Q_PROPERTY(QStringList lanIps READ lanIps NOTIFY loginUrlChanged)
+
 public:
     explicit WeiboLoginModule(WeiboController *controller);
 
@@ -30,6 +37,9 @@ public:
     Q_INVOKABLE bool loggedIn() const;
     Q_INVOKABLE QString uid() const;
 
+    QString loginUrl() const { return m_loginUrl; }
+    QStringList lanIps() const { return m_lanIps; }
+
     // 登录态自动刷新（默认 4 秒一次，构造函数里自动启动）
     Q_INVOKABLE void startAutoRefresh(int intervalMs = 4000);
     Q_INVOKABLE void stopAutoRefresh();
@@ -42,6 +52,7 @@ signals:
     void loggedOut();
     // 电脑端改完 Cookie、界面被自动更新时发出（main.qml 用它弹提示）
     void loginAutoRefreshed(const QString &screenName);
+    void loginUrlChanged();
 
 private:
     void pollLocalState();
@@ -54,4 +65,6 @@ private:
     int m_lastLoggedIn = -1;
     QString m_lastUid;
     QString m_lastName;
+    QString m_loginUrl;
+    QStringList m_lanIps;
 };

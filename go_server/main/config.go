@@ -96,5 +96,6 @@ var startupEndpoints = []string{
 	"超话：   /topic/detail  /topic/statuses  /topic/checkin  /topic/checkin/all  /topic/search",
 	"媒体：   /media/info",
 	"登录：   /login/import  /login/info  /logout  /config  /server/ping",
-	"自动导入： POST /config/import（电脑端发 cookies.json）  GET /server/state（本地快照）",
+	"自动导入： GET /server/state（本地快照，供界面轮询）  POST /config/import（脚本/自动化）",
+	"电脑端导入页： 独立监听 0.0.0.0（默认 8011），浏览器打开 /<token> 粘贴 Cookie",
 }

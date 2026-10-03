@@ -85,7 +85,7 @@ weibo_plugin/
 ├── tools/verify.py             # 结构 / 契约静态校验（CI 第一个 job）
 ├── tools/go_lint.py            # Go 兜底静态检查
 ├── tools/lambda_this.py        # lambda 缺 this 侦测（被 verify.py 的 S 项复用）
-├── tools/pen-push.ps1          # 电脑端：生成 cookies.json 并自动送入词典笔
+├── tools/test_autoimport.py    # 集成测试：导入页 + 文件监听 + BOM（不需要真机）
 ├── build_server.ps1            # Windows 编译 server（同 cc\netease，产物→仓库根）
 ├── cookies.example.json        # Cookie 模板（无真实值，随包发布）
 └── go_server/
@@ -288,7 +288,7 @@ weibo_plugin/
 ### 3.5 `POST /config/import` 的请求体（四种写法都接受）
 
 ```jsonc
-// 1) cookies.json 原文（推荐，也就是 tools/pen-push.ps1 生成的文件）
+// 1) cookies.json 原文（推荐格式，也就是插件目录里落盘的格式）
 {"cookies":[{"name":"SUB","value":"...","domain":".weibo.com","path":"/"}]}
 
 // 2) 裸数组
@@ -683,53 +683,69 @@ CI 产出三个 artifact：`libweibo_plugin.so`、`server`、`com.weibopocket.cl
 词典笔只有 320×170 触摸屏，在笔上粘贴 `SUB`/`SUBP` 又慢又容易错。
 目标：**在电脑上完成，笔上零操作**。
 
+做法与参考实现一致 —— bili 的 `bili-sms` 监听 `0.0.0.0:8666`、
+netease 的登录服务监听 `0.0.0.0:8667`，都是「主 API 留在 127.0.0.1，
+只把一张粘贴用的页面暴露给局域网」。本项目对应 `0.0.0.0:8011`。
+
 ```text
-电脑                                          词典笔
-────                                          ──────
-tools\pen-push.ps1
-  ├─ 解析 Cookie / cookies.json
-  ├─ 生成 cookies.json（UTF-8 无 BOM）
-  └─ 送达 ──┬─ adb push ──────────────► /userdisk/PenMods/plugins/weibo_plugin/cookies.json
-            │                                   │
-            │                          sidecar 文件监听（每 2s stat 一次）
-            │                                   ↓ 自动 loadCookieStore + refreshLoginState
-            ├─ POST /config/import ────► 同一个文件（服务端自己写）
-            │                                   ↓
-            └─ 盘符复制 ─────────────────►     C++ WeiboLoginModule 每 4s 轮询 GET /server/state
+电脑浏览器                                       词典笔
+─────────                                       ──────
+打开 http://<笔IP>:8011/<token>
+  （token 显示在笔的「设置 → 电脑端导入」）
+  ├─ 粘贴 "SUB=…; SUBP=…"，或选 cookies.json
+  └─ POST /<token>/import ──────────────────► loginpage.go 处理
+                                                ↓ importCookiesJSON()
+                                             写 /userdisk/PenMods/plugins/weibo_plugin/cookies.json
+                                                ↓
+                                     sidecar 文件监听（每 2s stat 一次）
+                                                ↓ 自动 loadCookieStore + refreshLoginState
+                                     C++ WeiboLoginModule 每 4s 轮询 GET /server/state
                                                 ↓ 发现 logged_in && verified
                                              setLoginUser() + loginAutoRefreshed 信号
                                                 ↓
                                              界面自动显示昵称（无需任何触控）
+
+其它送达路径（都走同一套自动生效机制）：
+  * 直接把 cookies.json 放进插件目录（PenManager / 挂载 / 文件管理器）
+  * POST http://<笔IP>:8010/config/import（需 WEIBO_BIND=0.0.0.0，脚本/自动化用）
 ```
 
-### 10.1 电脑端：`tools/pen-push.ps1`
+### 10.1 电脑端：登录页（`go_server/main/loginpage.go`）
 
-```powershell
-# 1) 最省事：从浏览器复制 Cookie 头
-powershell -NoProfile -ExecutionPolicy Bypass -File tools\pen-push.ps1 `
-    -Cookie "SUB=xxxxx; SUBP=yyyyy"
-
-# 2) 从文本文件读；3) 已有 cookies.json；4) 走网络；5) 只看计划；6) 反向拉取
-... -CookieFile .\cookie.txt
-... -Json .\cookies.json
-... -Cookie "SUB=..." -Method http -Pen 192.168.1.23
-... -Cookie "SUB=..." -DryRun
-... -Pull .\cookies-from-pen.json
-```
-
-送达方式 `-Method auto|usb|adb|http`，`auto` 按 **盘符 → adb → http** 顺序尝试：
-
-| 方式 | 说明 |
+| 路由 | 说明 |
 |------|------|
-| `usb` | `/userdisk` 以盘符方式挂载时直接复制文件 |
-| `adb` | **推荐**。PenManager 用的就是 adb；多设备时会用 `ls /userdisk/PenMods/plugins` 把手机/模拟器排除掉；设备上没有 PenMods 时拒绝推送（除非 `-Force`） |
-| `http` | 笔上 sidecar 以 `WEIBO_BIND=0.0.0.0` 启动时 POST `/config/import`（同一局域网） |
+| `GET /<token>` | 导入页（粘贴框 + 文件选择 + 结果 + 当前状态 + 下载 cookies.json） |
+| `GET /` 或错 token | 404 占位页，提示「照抄词典笔上显示的完整链接」 |
+| `GET /<token>/state` | 当前登录态（复用 `localState()`，不请求上游） |
+| `POST /<token>/import` | 表单字段 `payload`（Cookie 头或 cookies.json 文本）→ 落盘 |
+| `GET /<token>/cookies.json` | 把设备上现有的 cookies.json 导出（备份/换设备） |
 
-脚本会：校验 SUB 存在 / 长度合理 / 不是 `cookies.example.json` 的占位文案 →
-生成 `cookies.json`（**UTF-8 无 BOM**：Go 的 `encoding/json` 遇 BOM 会报
-`invalid character 'ï'`）→ 送达 → 用 `/server/state` 或响应里的 `verified` 报告是否真的生效。
+* 页面**自包含**：内联 CSS/JS，不引任何外部资源（PC 可能离线）。
+* token 为 8 位十六进制，进程启动时随机生成；只有带对 token 的路径才给页面，
+  避免同网段陌生设备凭空改写笔上的登录态。**对用户零成本**：笔上直接显示完整链接。
+* 独立监听，**启动失败只警告**（端口被占/无网络都不影响插件本身）。
+* 环境变量：`WEIBO_LOGIN_PORT`（默认 `8011`，设 `0` 关闭）、`WEIBO_LOGIN_BIND`（默认 `0.0.0.0`）。
 
-### 10.2 词典笔端：让导入自动生效
+**地址选择**：`lanIPv4()` 按「电脑能否连上」排序 ——
+`192.168.x` → `10.x` → `172.16-31.x` → 其它 → `169.254.x`（链路本地，最后）
+→ 回环（排除）。实测设备上会同时存在 `192.168.1.x`、`172.21.48.1`（虚拟网卡）
+和多个 `169.254.x`，不排序就会把用户引到一个打不开的地址上。
+
+### 10.2 自动化 / 脚本路径：`POST /config/import`
+
+需要先以 `WEIBO_BIND=0.0.0.0` 启动 sidecar（默认只听 `127.0.0.1`）。
+
+```bash
+curl -X POST http://<笔IP>:8010/config/import \
+     -H 'Content-Type: application/json' \
+     -d '{"cookies":[{"name":"SUB","value":"..."},{"name":"SUBP","value":"..."}]}'
+```
+
+请求体支持四种写法：cookies.json 原文 / 裸数组 / `{"cookie":"SUB=…"}` / 裸文本。
+开头带 UTF-8 BOM 也能识别（Go 的 `encoding/json` 遇 BOM 会报
+`invalid character 'ï'`，服务端会先剥掉）。
+
+### 10.3 词典笔端：让导入自动生效
 
 | 机制 | 位置 | 作用 |
 |------|------|------|

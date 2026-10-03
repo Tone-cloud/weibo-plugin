@@ -26,6 +26,14 @@ Rectangle {
         return (c && c.login) ? c.login : null
     }
 
+    // 电脑端导入页地址（sidecar 通过 /server/state 上报，含一次性 token）
+    function loginUrlText() {
+        var l = loginOf()
+        if (!l) return ""
+        var u = l.loginUrl
+        return (u === undefined || u === null) ? "" : String(u)
+    }
+
     function isLoggedIn() {
         var c = ctl()
         return c ? c.loggedIn === true : false
@@ -140,6 +148,124 @@ Rectangle {
             spacing: Theme.spacingSmall
             anchors.top: parent.top
             anchors.topMargin: Theme.spacingSmall
+
+            // ============ 电脑端导入（推荐，笔上不用打字）============
+            // 与 bili 的 bili-sms:8666 / netease 的登录服务:8667 同一思路：
+            // sidecar 单独监听 0.0.0.0，电脑浏览器打开这个链接就能粘贴 Cookie。
+            // 完整链接由 sidecar 通过 /server/state 上报（含一次性 token），
+            // 这里只负责显示，用户在电脑上照抄即可。
+            Rectangle {
+                id: desktopCard
+                width: parent.width - Theme.spacingNormal * 2
+                anchors.horizontalCenter: parent.horizontalCenter
+                radius: Theme.radiusMedium
+                color: Theme.bgCard
+                border.width: 1
+                border.color: Theme.withAlpha(Theme.primary, 0.45)
+                height: desktopColumn.childrenRect.height + Theme.spacingNormal * 2
+
+                Column {
+                    id: desktopColumn
+                    width: parent.width - Theme.spacingNormal * 2
+                    spacing: Theme.spacingSmall
+                    anchors.top: parent.top
+                    anchors.topMargin: Theme.spacingNormal
+                    anchors.horizontalCenter: parent.horizontalCenter
+
+                    Text {
+                        text: "电脑端导入（推荐）"
+                        color: Theme.primaryLight
+                        font.family: Theme.fontFamily
+                        font.pixelSize: Theme.fontSmall
+                        font.bold: true
+                    }
+
+                    Text {
+                        width: parent.width
+                        text: "在电脑浏览器打开下面的链接，粘贴 SUB / SUBP 即可；"
+                              + "笔上不用打字，登录后几秒内自动生效。"
+                        color: Theme.textSecondary
+                        font.family: Theme.fontFamily
+                        font.pixelSize: Theme.fontTiny
+                        wrapMode: Text.WordWrap
+                    }
+
+                    // 链接本体：用底色块突出，方便照抄
+                    Rectangle {
+                        width: parent.width
+                        height: urlText.height + Theme.spacingSmall * 2
+                        radius: Theme.radiusSmall
+                        color: Theme.bgInput
+                        border.width: 1
+                        border.color: Theme.withAlpha(Theme.borderLight, 0.8)
+                        visible: root.loginUrlText() !== ""
+
+                        Text {
+                            id: urlText
+                            anchors.left: parent.left
+                            anchors.right: parent.right
+                            anchors.verticalCenter: parent.verticalCenter
+                            anchors.margins: Theme.spacingSmall
+                            text: root.loginUrlText()
+                            color: Theme.primaryLight
+                            font.family: Theme.fontFamily
+                            font.pixelSize: Theme.fontBody
+                            font.bold: true
+                            wrapMode: Text.WrapAnywhere
+                            horizontalAlignment: Text.AlignHCenter
+                        }
+                    }
+
+                    Text {
+                        width: parent.width
+                        visible: root.loginUrlText() === ""
+                        text: "本地服务还没上报导入地址。确认插件已正常启动"
+                              + "（或 sidecar 被 WEIBO_LOGIN_PORT=0 关掉了）。"
+                        color: Theme.warning
+                        font.family: Theme.fontFamily
+                        font.pixelSize: Theme.fontTiny
+                        wrapMode: Text.WordWrap
+                    }
+
+                    Row {
+                        width: parent.width
+                        spacing: Theme.spacingSmall
+
+                        Rectangle {
+                            width: 72
+                            height: 26
+                            radius: Theme.radiusMedium
+                            color: refreshUrlArea.pressed ? Theme.bgCardHover : Theme.bgTertiary
+
+                            Text {
+                                anchors.centerIn: parent
+                                text: "刷新地址"
+                                color: Theme.textPrimary
+                                font.family: Theme.fontFamily
+                                font.pixelSize: Theme.fontTiny
+                            }
+
+                            MouseArea {
+                                id: refreshUrlArea
+                                anchors.fill: parent
+                                onClicked: {
+                                    var l = root.loginOf()
+                                    if (l && l.refreshNow) l.refreshNow()
+                                }
+                            }
+                        }
+
+                        Text {
+                            width: parent.width - 80
+                            anchors.verticalCenter: parent.verticalCenter
+                            text: "同一 Wi-Fi 下才能访问"
+                            color: Theme.textTertiary
+                            font.family: Theme.fontFamily
+                            font.pixelSize: Theme.fontTiny
+                        }
+                    }
+                }
+            }
 
             // ================= 账号 =================
             Rectangle {

@@ -72,9 +72,14 @@ func main() {
 	// 端口已就绪，登录态初始化放到后台，避免拖慢 C++ 的探测。
 	go client.Init()
 
-	// 监听 cookies.json 的外部改动（adb push / PenManager 传文件 / 挂载 U 盘写入），
+	// 监听 cookies.json 的外部改动（PenManager 传文件 / 挂载写入 / 脚本推送），
 	// 改动后自动应用到运行中的 client —— 电脑端传完即可用，笔上无需任何操作。
 	go startCookieWatcher(cookieWatchInterval)
+
+	// 「电脑端导入」登录页：独立监听 0.0.0.0，电脑浏览器打开即可粘贴 Cookie。
+	// 主 API 仍然只在 127.0.0.1，只有这一张页面暴露给局域网（与 bili 的
+	// bili-sms:8666、netease 的登录服务:8667 同一思路）。
+	go startLoginPage()
 
 	serveErr := make(chan error, 1)
 	go func() {
@@ -110,8 +115,9 @@ func printBanner(addr string) {
 	logPlain(" 调试模式 : %v", DEBUG)
 	logPlain(" Cookie   : %s", cookieStorePath())
 	logPlain(" 历史文件 : %s", searchHistoryPath())
-	logPlain(" 自动导入 : 电脑端改完 cookies.json（adb push / 挂载 / HTTP POST")
-	logPlain("            /config/import）会在 %s 内自动生效，笔上无需操作", cookieWatchInterval)
+	logPlain(" 电脑端导入: %s", firstNonEmpty(loginURL(), "已关闭（WEIBO_LOGIN_PORT=0）"))
+	logPlain("            在电脑浏览器打开上面的链接粘贴 Cookie 即可；")
+	logPlain("            改完 cookies.json 或导入后 %s 内自动生效，笔上无需操作", cookieWatchInterval)
 	logPlain("----------------------------------------------------------")
 	for _, line := range startupEndpoints {
 		logPlain(" %s", line)

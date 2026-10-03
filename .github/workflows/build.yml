@@ -245,22 +245,18 @@ jobs:
           grep -q '"ok":true' /tmp/ping.json || { echo "ping failed"; cat /tmp/server.log; exit 1; }
           grep -q '"code":0' /tmp/ping.json || { echo "envelope wrong"; cat /tmp/ping.json; exit 1; }
 
-      # End-to-end test of the "prepare cookies on the PC, auto-import into the
+      # End-to-end test of the "paste cookies on the PC, auto-import into the
       # pen" flow. No real device needed: a host build of the sidecar acts as
-      # one. Covers /config/import (4 body shapes), the cookies.json file
-      # watcher, UTF-8 BOM tolerance, and the error branches.
-      - name: Auto-import integration tests (pen-push.ps1 + file watcher + BOM)
+      # one. Covers the LAN import page (token, form POST, export), the
+      # /config/import API (4 body shapes), the cookies.json file watcher,
+      # UTF-8 BOM tolerance, and the error branches.
+      - name: Auto-import integration test (LAN login page + watcher + BOM)
         working-directory: go_server/main
         run: |
           set -euo pipefail
           CGO_ENABLED=0 GOOS=linux GOARCH=$(go env GOARCH) go build -o ../../server_host .
           cd "$GITHUB_WORKSPACE"
-
-          echo "=== tools/test_autoimport.py: /config/import + watcher + BOM + errors ==="
           python3 tools/test_autoimport.py ./server_host
-
-          echo "=== tools/test_penpush.ps1: PC-side tool end to end ==="
-          pwsh -NoProfile -File tools/test_penpush.ps1 -Exe ./server_host
 
       - name: Upload server
         uses: actions/upload-artifact@v4

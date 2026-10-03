@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -144,6 +145,9 @@ func localState() (map[string]any, error) {
 	out["cookie_file"] = cookieStorePath()
 	out["plugin_dir"] = pluginDir()
 	out["version"] = appVersion
+	// 词典笔界面要显示「在电脑浏览器打开这个链接」，所以这里把完整 URL 带上
+	out["login_url"] = loginURL()
+	out["lan_ips"] = toAnySlice(lanIPv4())
 
 	client := getClient()
 	if client == nil {
@@ -160,13 +164,41 @@ func localState() (map[string]any, error) {
 	return out, nil
 }
 
-// lanIPv4 列出本机非回环 IPv4，绑定 0.0.0.0 时打印出来给电脑端用。
+// ipPriority 给候选局域网 IPv4 打分，越小越可能是「电脑能连上」的地址。
+//
+// 为什么需要：设备上常常同时存在好几个地址，实测这台机器就有
+// 169.254.x（link-local，电脑根本连不上）、172.21.48.1（Hyper-V 虚拟网卡）、
+// 以及真正的 192.168.1.x。如果按枚举顺序取第一个，词典笔就会显示一个
+// 用户打不开的链接。
+func ipPriority(ip net.IP) int {
+	switch {
+	case ip[0] == 192 && ip[1] == 168:
+		return 0 // 家用路由器最常见
+	case ip[0] == 10:
+		return 1
+	case ip[0] == 172 && ip[1] >= 16 && ip[1] <= 31:
+		return 2
+	case ip.IsLinkLocalUnicast():
+		return 90 // 169.254.x：链路本地，电脑连不上
+	case ip.IsLoopback():
+		return 99
+	default:
+		return 50
+	}
+}
+
+// lanIPv4 列出本机非回环 IPv4，**按「电脑能否连上」排序**（最可能可用的在前）。
 func lanIPv4() []string {
 	addrs, err := net.InterfaceAddrs()
 	if err != nil {
 		return nil
 	}
-	out := make([]string, 0, 4)
+	type cand struct {
+		ip    string
+		score int
+	}
+	var cands []cand
+	seen := map[string]bool{}
 	for _, addr := range addrs {
 		ipnet, ok := addr.(*net.IPNet)
 		if !ok || ipnet.IP == nil || ipnet.IP.IsLoopback() {
@@ -176,7 +208,17 @@ func lanIPv4() []string {
 		if ip4 == nil {
 			continue
 		}
-		out = append(out, ip4.String())
+		text := ip4.String()
+		if seen[text] {
+			continue
+		}
+		seen[text] = true
+		cands = append(cands, cand{ip: text, score: ipPriority(ip4)})
 	}
-	return dedupeStrings(out)
+	sort.SliceStable(cands, func(i, j int) bool { return cands[i].score < cands[j].score })
+	out := make([]string, 0, len(cands))
+	for _, c := range cands {
+		out = append(out, c.ip)
+	}
+	return out
 }
