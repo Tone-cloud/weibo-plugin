@@ -1,49 +1,100 @@
 #!/bin/bash
-# 一键打包：编译 so + Go sidecar，组装 weibo_plugin/ 并压成 weibo_plugin.zip
+# 一键打包（Linux / macOS / CI）—— 生成可直接解压到设备的插件 zip
+#
+# 与 cc\netease\package.ps1 的流程一致：
+#   zip 内容是**平铺**的（metadata.json / server / icon.png / qml/ ...），
+#   解压到 /userdisk/PenMods/plugins/weibo_plugin/ 即为插件根目录。
 #
 # 前置：
-#   - xmake 已配置好 aarch64 Qt 交叉编译环境（见 README）
-#   - Go 1.22+
+#   * Go 1.22+  —— 用来编译 server（脚本会自己调 go_server/build.sh）
+#   * libweibo_plugin.so —— 由 GitHub Actions 编译，下载后放到 build/
+#     （本机有 xmake + aarch64 Qt 环境时也可以用 -x 让脚本自己编）
 #
-# 产物：根目录 weibo_plugin.zip，解压后即为设备插件根目录 weibo_plugin/
+# 用法：
+#   ./package.sh                 # 编译 server + 打包
+#   ./package.sh -x              # 先跑 xmake 编 .so，再打包
+#   SO=path/to/libweibo_plugin.so ./package.sh
+#   OUT=/tmp/out.zip ./package.sh
 
 set -euo pipefail
 
-pwd_dir="$(pwd)"
-echo "当前目录：$pwd_dir"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+cd "$SCRIPT_DIR"
 
-echo '==> 编译插件 (xmake)'
-xmake
+RUN_XMAKE=0
+for arg in "$@"; do
+    [ "$arg" = "-x" ] && RUN_XMAKE=1
+done
 
-echo '==> 编译 Go 服务器'
-cd "$pwd_dir/go_server"
-./build.sh
-cd "$pwd_dir"
+OUT="${OUT:-$SCRIPT_DIR/../com.weibopocket.client.zip}"
+
+if [ "$RUN_XMAKE" = "1" ]; then
+    echo '==> 编译插件 (xmake)'
+    xmake
+fi
+
+echo '==> 编译 Go sidecar'
+./go_server/build.sh
 echo '----------------'
 
-SO_PATH="build/linux/arm64-v8a/release/libweibo_plugin.so"
-if [ ! -f "$SO_PATH" ]; then
-    echo "找不到 $SO_PATH" >&2
+# ---- 找 .so：优先 -SO / $SO，其次 build/ 下各处 ----
+if [ -z "${SO:-}" ]; then
+    for cand in \
+        "build/libweibo_plugin.so" \
+        "build/linux/arm64-v8a/release/libweibo_plugin.so" \
+        "libweibo_plugin.so"
+    do
+        [ -f "$cand" ] && SO="$cand" && break
+    done
+fi
+
+if [ -z "${SO:-}" ] || [ ! -f "$SO" ]; then
+    echo "警告: 找不到 libweibo_plugin.so" >&2
+    echo "      .so 由 GitHub Actions 编译（.github/workflows/build.yml 的 build-so job），" >&2
+    echo "      下载 artifact 后放到 build/ 再打包；本机有 xmake 环境时用 ./package.sh -x" >&2
+    SO=""
+fi
+
+if [ ! -f server ]; then
+    echo "找不到 server —— 先执行 ./go_server/build.sh" >&2
     exit 1
 fi
 
-# 临时目录
-rm -rf weibo_plugin
-mkdir -p weibo_plugin
-cp "$SO_PATH"          ./weibo_plugin/libweibo_plugin.so
-cp go_server/weibo-server ./weibo_plugin/weibo-server
-chmod +x ./weibo_plugin/weibo-server
-cp -r ./qml             ./weibo_plugin
-cp metadata.json        ./weibo_plugin
-cp icon.png             ./weibo_plugin
+# ---- 平铺打包 ----
+rm -f "$OUT"
+FILES=(metadata.json server icon.png README.md cookies.example.json)
+[ -n "$SO" ] && FILES+=(libweibo_plugin.so) && cp -f "$SO" ./libweibo_plugin.so
 
-# 打包
-rm -f weibo_plugin.zip
-zip -r weibo_plugin.zip weibo_plugin/*
+# -j 去掉路径前缀 → 文件位于 zip 根目录
+zip -j -q "$OUT" "${FILES[@]}"
+# qml 目录保留 qml/ 前缀
+zip -r -q "$OUT" qml
 
-# 清理
-rm -rf ./weibo_plugin
+# 清理临时拷贝
+[ -n "$SO" ] && rm -f ./libweibo_plugin.so
 
+# ---- 结果自检 ----
 echo '----------------'
-ls -lh weibo_plugin.zip
-echo '打包完成'
+unzip -l "$OUT" | head -20
+# metadata.json 的入口必须真的在包里
+python3 - "$OUT" "$SCRIPT_DIR/metadata.json" <<'PY'
+import json, sys, zipfile
+out, meta_path = sys.argv[1], sys.argv[2]
+meta = json.load(open(meta_path, encoding="utf-8"))
+names = set(zipfile.ZipFile(out).namelist())
+fail = False
+for key in ("main_qml", "main_so"):
+    want = meta[key]
+    if want in names:
+        print(f"OK   {key} -> {want}")
+    elif key == "main_so":
+        print(f"警告 main_so -> {want} 不在包里（.so 未提供）")
+    else:
+        print(f"FATAL metadata.json 的 {key} -> {want} 不在包里")
+        fail = True
+sys.exit(1 if fail else 0)
+PY
+
+ls -lh "$OUT"
+echo "打包完成: $OUT"
+echo "解压到设备: /userdisk/PenMods/plugins/weibo_plugin/"

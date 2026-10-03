@@ -23,5 +23,5 @@ cp /path/to/LXGWWenKai-Regular.ttf  qml/fonts/weibo.ttf
 - 字体缺失时 `Theme.fontFamily` 会自动回落到 `Microsoft YaHei`，
   插件仍可运行，只是中文可能显示异常。
 
-打包时 `qml/` 整目录会被复制，所以字体放进来就会一起进 `weibo_plugin.zip`。
+打包时 `qml/` 整目录会被复制，所以字体放进来就会一起进 `com.weibopocket.client.zip`。
 注意 `.gitignore` 已排除 `*.ttf`，以免把大文件提交进仓库。

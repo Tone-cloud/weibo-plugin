@@ -14,7 +14,7 @@
 | 作者 | WeiboPocket |
 | 安装路径 | `/userdisk/PenMods/plugins/weibo_plugin/` |
 | 主 so | `libweibo_plugin.so` |
-| 本地服务 | `weibo-server`，监听 `127.0.0.1:8010` |
+| 本地服务 | `server`，监听 `127.0.0.1:8010` |
 
 ---
 
@@ -37,7 +37,7 @@
 
 ## 安装 / 更新
 
-1. 从 Release 下载 `weibo_plugin.zip`，或自行打包（见下）
+1. 从 Release 下载 `com.weibopocket.client.zip`，或自行打包（见下）
 2. 解压到词典笔：
 
 ```text
@@ -49,7 +49,7 @@
 ```text
 weibo_plugin/
 ├── libweibo_plugin.so   # Qt/C++ 插件
-├── weibo-server         # 本地 Go API 服务
+├── server         # 本地 Go API 服务
 ├── qml/                 # QML 界面
 ├── metadata.json        # 插件入口元数据
 └── icon.png
@@ -58,7 +58,7 @@ weibo_plugin/
 4. 在 PenMods 插件管理中启用 **笔里微博**，进入插件 / 重启设备完成更新。
 
 > 插件会在 `init_plugin()` 里同步拉起本地 Go 服务（`127.0.0.1:8010`）。
-> 想查看服务日志：`pkill -f weibo-server` 后以 `DEBUG=true ./weibo-server` 手动启动，
+> 想查看服务日志：`pkill -f server` 后以 `DEBUG=true ./server` 手动启动，
 > 此时会监听 `0.0.0.0:8010` 便于在电脑上调试。
 
 ### 字体（重要）
@@ -130,19 +130,19 @@ extern "C" void destroy_plugin();
 
 ---
 
-## 在 GitHub 上编译
+## 在 GitHub 上编译（.so 走这里）
 
 `.github/workflows/build.yml` 里四个 job，全部在 GitHub 托管 runner 上跑，
-本地不需要任何交叉编译环境：
+本机不需要任何交叉编译环境：
 
 | Job | 产物 |
 |-----|------|
-| `verify` | `tools/verify.py` 静态契约校验（秒级，先跑） |
-| `build-so` | `libweibo_plugin.so`（aarch64，已 strip） |
-| `build-server` | `weibo-server`（linux/arm64，静态） |
-| `package` | `weibo_plugin.zip`（可直接解压到设备） |
+| `verify` | `tools/verify.py` + `tools/go_lint.py` 静态契约校验（秒级，先跑） |
+| `build-so` | `libweibo_plugin.so`（aarch64，已 strip）← **这就是要下回来的那个** |
+| `build-server` | `server`（linux/arm64，静态；可选，本机也能编，见下） |
+| `package` | `com.weibopocket.client.zip`（可直接解压到设备） |
 
-`build-so` 与 netease-music 的做法完全一致 —— 依次 clone 三个仓库作为交叉编译环境：
+`build-so` 与 netease-music 的工作流做法完全一致 —— 依次 clone 三个仓库作为交叉编译环境：
 
 ```text
 https://github.com/Lyrecoul/qt-5.15.2-for-aarch64-dictpen-linux.git
@@ -158,13 +158,17 @@ make -j$(nproc)
 aarch64-dictpen-linux-gnu-strip --strip-unneeded build/libweibo_plugin.so
 ```
 
-CI 里额外做了三件 netease 没做的事，用来提前暴露问题：
+CI 里额外做了四件 netease 没做的事，用来提前暴露问题：
 
 1. **校验导出符号**：`nm -D` 确认 `init_plugin` / `attach_engine` / `destroy_plugin`
    确实导出，缺一个就直接失败（否则插件装到设备上会静默不工作）。
-2. **Go 依赖校验**：`go mod tidy` 后 `go.sum` 必须为空 —— 本项目只允许标准库。
-3. **打包校验**：`unzip` 前用 Python 读 `metadata.json`，确认 `main_qml` 与
-   `main_so` 指向的文件在包里真实存在。
+2. **Go 依赖校验**：`go mod tidy` 后 `go.sum` 必须为空 —— 本项目只允许标准库；
+   并跑 `go vet` 与一次真实的 `/server/ping` 冒烟测试。
+3. **打包校验**：读 `metadata.json`，确认 `main_qml` (`qml/main.qml`) 与
+   `main_so` (`libweibo_plugin.so`) 在 zip 里真实存在，并断言 zip 里**没有**
+   反斜杠条目名。
+4. **打包前校验布局**：`server` / `qml/main.qml` / `icon.png` / `cookies.example.json`
+   一个都不能少。
 
 ### 触发方式
 
@@ -173,47 +177,50 @@ push 到 main/master（改到 src/ qml/ go_server/ *.pro 等路径时）
 手动：Actions → Build WeiboPocket Plugin → Run workflow
 ```
 
+### 拿产物
+
+```text
+Actions → 某次运行 → Artifacts
+  ├── libweibo_plugin            → 解压得到 libweibo_plugin.so
+  ├── server                     → 解压得到 server（可选）
+  └── com.weibopocket.client-zip → 直接可装的完整包
+```
+
 ---
 
 ## 本地开发构建
 
-> 交叉编译目标：`arm64-v8a` / `aarch64-linux-gnu`。需要 Linux 主机。
+### 编译 Go sidecar（本机，与 cc\netease 的做法一致）
 
-### 方式一：xmake（与 bili 相同）
+netease 用 `build_server.ps1` 在 Windows 上交叉编译，本项目同样是这个流程：
 
-```bash
-xmake f -c \
-  --qt="/path/to/aarch64/qt" \
-  --arch=arm64-v8a \
-  --toolchain=zigcc \
-  --cross=aarch64-linux-gnu.2.27 \
-  -m release -vD
+```powershell
+# Windows PowerShell 默认是 Restricted，脚本要显式 Bypass
+powershell -NoProfile -ExecutionPolicy Bypass -File build_server.ps1
 
-xmake
-# 产物：build/linux/arm64-v8a/release/libweibo_plugin.so
+# 产物：仓库根目录 server（linux/arm64，纯静态）
+# 本机调试版本：
+powershell -NoProfile -ExecutionPolicy Bypass -File build_server.ps1 -Local
+#   -> server_host.exe
 ```
 
-### 方式二：qmake（与 CI 相同）
+脚本会自动找 Go：优先 `C:\Users\aresi\go-sdk\go\bin\go.exe`（netease 的脚本用的
+就是这个路径），其次 `%USERPROFILE%\go-sdk`、`Program Files\Go`，最后回落 PATH。
+编译前会先跑 `go vet`。
+
+Linux / macOS / CI：
 
 ```bash
-# 先把三个环境仓库 clone 到仓库上一级目录，并把 bin 加进 PATH
-../qt-5.15.2-for-aarch64-dictpen-linux/bin/qmake weibo_plugin.pro
-make -j$(nproc)
+./go_server/build.sh                # → 仓库根目录 server（linux/arm64）
+GOARCH=amd64 ./go_server/build.sh   # 本机平台
 ```
 
-### 编译 Go sidecar
+等价的裸命令（与 CI 相同）：
 
 ```bash
 cd go_server/main
 CGO_ENABLED=0 GOOS=linux GOARCH=arm64 \
-  go build -trimpath -ldflags="-s -w" -o ../weibo-server .
-```
-
-或直接用脚本：
-
-```bash
-./go_server/build.sh              # 默认 linux/arm64
-GOARCH=amd64 ./go_server/build.sh # 本机调试
+  go build -trimpath -ldflags="-s -w" -o ../../server .
 ```
 
 ### 本地调试 Go 服务
@@ -226,18 +233,55 @@ curl http://127.0.0.1:8010/server/ping
 curl 'http://127.0.0.1:8010/feed/hot' | head -c 400
 ```
 
-### 一键打包
+### 编译 .so（本机，可选）
+
+`.so` 推荐直接用 GitHub Actions 的产物。本机要自己编的话：
 
 ```bash
-./package.sh                     # Linux：xmake + go build + zip
+# 方式一：xmake（与 bili 相同）
+xmake f -c --qt="/path/to/aarch64/qt" --arch=arm64-v8a \
+        --toolchain=zigcc --cross=aarch64-linux-gnu.2.27 -m release -vD
+xmake
+# 产物：build/linux/arm64-v8a/release/libweibo_plugin.so
+
+# 方式二：qmake（与 CI 相同，三个环境仓库 clone 到仓库根目录旁）
+./qt-5.15.2-for-aarch64-dictpen-linux/bin/qmake weibo_plugin.pro
+make -j$(nproc)
 ```
+
+### 一键打包
+
+打包与 netease 的 `package.ps1` 一致：**平铺布局**（`metadata.json` / `server` /
+`icon.png` / `qml/` 直接在 zip 根目录），解压到
+`/userdisk/PenMods/plugins/weibo_plugin/` 即为插件根目录。
 
 ```powershell
-pwsh -File package.ps1 -RunXmake -RunGo   # Windows
-pwsh -File package.ps1                    # 只用已有产物打包
+# Windows：.so 先放到 build\ 下（从 Actions artifact 解压）
+powershell -NoProfile -ExecutionPolicy Bypass -File package.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File package.ps1 -RunGo   # 顺便编 server
+# 产物：仓库上一级目录 com.weibopocket.client.zip
 ```
 
-产物：根目录 `weibo_plugin.zip`，解压后即为设备插件根目录。
+```bash
+# Linux / macOS
+./package.sh          # 编译 server + 打包
+./package.sh -x       # 顺便跑 xmake 编 .so
+```
+
+打包脚本会自检：zip 里不能有反斜杠条目名、`metadata.json` 声明的 `main_qml` /
+`main_so` 必须在包里、`server` 与 `qml/components/Theme.qml` 必须存在。
+
+> ⚠ **不要用 `Compress-Archive` 打包目录**。Windows PowerShell 5.1 的
+> `Compress-Archive` 会把目录分隔符写成反斜杠（zip 里出现 `qml\main.qml`）。
+> ZIP 规范要求 `/`，Linux/Android 解压时反斜杠只是普通文件名字符 ——
+> 结果是多出一个叫 `qml\main.qml` 的文件、却没有 `qml/` 目录，插件直接加载失败。
+> `package.ps1` 因此改用 `ZipArchive` 手工写条目名。
+
+> ⚠ **`.ps1` 必须带 UTF-8 BOM**。Windows PowerShell 5.1 读没有 BOM 的 `.ps1`
+> 会按系统 ANSI 代码页（简中机器上是 GBK）解码，中文注释变乱码后可能凑出引号/
+> 花括号，直接报 `Unexpected token` 语法错误。`tools/verify.py` 的 Q 项会检查
+> 这一点，`--fix` 自动补 BOM。反过来 `.sh` **绝不能**有 BOM（会破坏 shebang）。
+
 
 ---
 
@@ -250,7 +294,7 @@ weibo_plugin/
 │   ├── components/            # 可复用组件
 │   │   ├── qmldir             # singleton Theme + 21 个组件
 │   │   └── Theme.qml          # 主题单例（必须在 components/ 下）
-│   ├── pages/                 # 业务页面
+│   ├── pages/                 # 业务页面（13 个）
 │   ├── js/                    # ImageUrl / RichText / TimeText
 │   └── fonts/                 # （可选）weibo.ttf
 ├── src/                       # Qt/C++ 插件
@@ -262,19 +306,23 @@ weibo_plugin/
 │   └── modules/               # feed / status / comment / search / profile
 │                              # login / publish / topic / media / viewer
 ├── go_server/
-│   ├── build.sh
-│   └── main/                  # 本地 API 服务（Go 标准库 only）
+│   ├── build.sh               # Linux 编译 server（→ 仓库根目录 server）
+│   └── main/                  # 本地 API 服务（Go 标准库 only，21 个 .go）
 ├── tools/
-│   └── verify.py              # 结构 / 契约静态校验（CI 第一个 job）
+│   ├── verify.py              # 结构 / 契约静态校验（17 项，CI 第一个 job）
+│   └── go_lint.py             # Go 兜底：未用 import / 未用局部变量 / 未定义调用
 ├── docs/
 │   ├── SPEC.md                # HTTP + C++ + 构建契约
 │   └── QML-CONTRACT.md        # QML 组件 / 页面 / 角色名契约
 ├── .github/workflows/build.yml
+├── build_server.ps1           # Windows 编译 server（同 cc\netease）
+├── package.sh / package.ps1   # 打包（平铺 zip，同 cc\netease）
+├── xmake.lua                  # 本地 .so 构建（同 bili）
+├── weibo_plugin.pro           # CI 用的 qmake 工程
 ├── metadata.json
 ├── icon.png
-├── xmake.lua
-├── weibo_plugin.pro
-├── package.sh / package.ps1
+├── cookies.example.json       # Cookie 模板（无真实值，可提交）
+├── .gitattributes / .gitignore
 └── README.md
 ```
 

@@ -21,7 +21,7 @@
 | QML 模块名 | `WeiboPlugin` |
 | QML 命名空间 | `WeiboPlugin 1.0` |
 | 图片来源 | `image://weibo/...` |
-| 本地 Go 服务 | `weibo-server`，监听 `127.0.0.1:8010` |
+| 本地 Go 服务 | `server`，监听 `127.0.0.1:8010` |
 | 目标架构 | `aarch64-linux-gnu` / arm64-v8a |
 
 ### PenMods 插件 ABI（与 bili 完全一致）
@@ -83,8 +83,11 @@ weibo_plugin/
 │   ├── pages/*.qml
 │   └── fonts/                  # （可选）weibo.ttf
 ├── tools/verify.py             # 结构 / 契约静态校验（CI 第一个 job）
+├── tools/go_lint.py            # Go 兜底静态检查
+├── build_server.ps1            # Windows 编译 server（同 cc\netease，产物→仓库根）
+├── cookies.example.json        # Cookie 模板（无真实值，随包发布）
 └── go_server/
-    ├── build.sh
+    ├── build.sh                # Linux 编译 server（产物→仓库根 server）
     └── main/                 # go module: weibopocket/server
         ├── go.mod
         ├── main.go  config.go  log.go  http.go  routes.go
@@ -531,11 +534,14 @@ QT += core network
 CONFIG += shared c++17
 TEMPLATE = lib
 TARGET = weibo_plugin
-DESTDIR = $$PWD/../build
+DESTDIR = $$PWD/build
 ```
 交叉编译环境由 CI 克隆：`qt-5.15.2-for-aarch64-dictpen-linux`、
 `aarch64-dictpen-linux-gnu-gcc-toolchain`、`dictpen-libs`（与 netease 完全一致）。
 需要链接：`-lQt5Qml -lQt5Quick -lQt5Gui -lQt5Network -lQt5Core -lGLESv2 -lEGL -lmali`。
+
+> `DESTDIR` 是 `$$PWD/build`（不是 netease 的 `$$PWD/../build`）：本 `.pro` 在仓库
+> 根目录，而 netease 的在 `plugin/` 子目录里，CI 也是在仓库根目录执行 qmake。
 
 ### 8.2 xmake（本地，参照 bili）
 
@@ -546,24 +552,55 @@ xmake
 # 产物 build/linux/arm64-v8a/release/libweibo_plugin.so
 ```
 
-### 8.3 Go sidecar
+### 8.3 Go sidecar（产物固定为仓库根目录 `server`）
+
+与 `cc\netease` 的做法一致，本机编译：
+
+```powershell
+# Windows（PowerShell 默认 Restricted，必须显式 Bypass）
+powershell -NoProfile -ExecutionPolicy Bypass -File build_server.ps1          # linux/arm64
+powershell -NoProfile -ExecutionPolicy Bypass -File build_server.ps1 -Local   # 本机调试
+```
+
+```bash
+# Linux / macOS
+./go_server/build.sh                # → 仓库根目录 server（linux/arm64）
+GOARCH=amd64 ./go_server/build.sh   # 本机平台
+```
+
+等价的裸命令（CI 用这条）：
 
 ```bash
 cd go_server/main
-CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags="-s -w" -o ../weibo-server
+CGO_ENABLED=0 GOOS=linux GOARCH=arm64 \
+  go build -trimpath -ldflags="-s -w" -o ../../server .
 ```
 
-### 8.4 打包产物
+### 8.4 打包产物（平铺布局，与 netease 的 package.ps1 一致）
+
+zip 根目录直接就是插件根目录：
 
 ```text
-weibo_plugin/
+com.weibopocket.client.zip
 ├── libweibo_plugin.so
-├── weibo-server
-├── qml/
+├── server
 ├── metadata.json
-└── icon.png
+├── icon.png
+├── README.md
+├── cookies.example.json
+└── qml/
 ```
-CI 产出 `weibo_plugin.zip` + `libweibo_plugin.so` + `weibo-server` 三个 artifact。
+
+解压到 `/userdisk/PenMods/plugins/weibo_plugin/`。
+
+> 两个必须遵守的打包约束（都已在 `package.ps1` / `package.sh` 内自检）：
+> 1. ZIP 条目名只能用 `/`。Windows PowerShell 5.1 的 `Compress-Archive` 打包
+>    **目录**时会写成反斜杠（`qml\main.qml`），Linux 解压后会得到一个反斜杠
+>    文件名的文件而不是目录，插件必然加载失败。
+> 2. `.ps1` 含中文时必须带 UTF-8 BOM，否则 PowerShell 5.1 按 GBK 解析会报语法错误；
+>    `.sh` 则绝不能带 BOM（会破坏 shebang）。`tools/verify.py` 的 Q 项检查这两点。
+
+CI 产出三个 artifact：`libweibo_plugin.so`、`server`、`com.weibopocket.client.zip`。
 
 ---
 

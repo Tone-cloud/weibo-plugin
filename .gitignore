@@ -16,16 +16,24 @@ Makefile
 build/linux/
 
 # ---- go ----
-go_server/weibo-server
+# Go 产物：仓库根目录的 server（交叉编译到设备）与 server_host.exe（本机调试）
+/server
+/server_host.exe
+/server_test.exe
 go_server/server
-go_server/main/weibo-server
-/tmp/
+go_server/server_arm
+# 本地 go 缓存（build_server.ps1 若指定 GOCACHE 到此目录时不要再提交）
+.gocache/
+.gopath/
+*.test
 
 # ---- local state (DO NOT COMMIT: contains login cookies) ----
 cookies.json
-go_server/main/cookies.json
 **/cookies.json
-# cookies.example.json IS committed (documentation only, no real values)
+# cookies.example.json 是**要提交**的模板（无真实值）
+search_history.json
+publish_draft.txt
+.smoke_*
 
 # ---- fonts (large, licensing) ----
 *.ttf

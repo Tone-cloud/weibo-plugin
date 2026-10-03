@@ -1,7 +1,7 @@
 # WeiboPocket - 词典笔微博客户端插件
 #
 # 只负责把 QML 类型 WeiboController / 各列表模型注册进宿主 QML 引擎，
-# 并同步拉起本地 Go sidecar（weibo-server，127.0.0.1:8010）。
+# 并同步拉起本地 Go sidecar（server，127.0.0.1:8010）。
 #
 # 交叉编译流程与 Tone-cloud/netease-music 保持一致：
 #   CI 依次 clone qt-5.15.2-for-aarch64-dictpen-linux、

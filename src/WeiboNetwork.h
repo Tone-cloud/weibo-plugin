@@ -21,7 +21,7 @@
 
 class QNetworkRequest;
 
-// 与本地 Go sidecar（weibo-server, 127.0.0.1:8010）通信的客户端。
+// 与本地 Go sidecar（server, 127.0.0.1:8010）通信的客户端。
 // 契约见 docs/SPEC.md 第 3 节：响应统一为 { code, message, data }。
 //
 // 线程约定（与 BiliNetwork 一致）：

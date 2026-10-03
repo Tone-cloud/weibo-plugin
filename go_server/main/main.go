@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-// main 启动 weibo-server（weibopocket/server）。
+// main 启动 server（weibopocket/server）。
 //
 // 启动顺序刻意与 BiliPocket 保持一致：
 //  1. 先 net.Listen —— C++ 侧的 probeServer 只有在端口真正可连时才认为 sidecar 就绪，
@@ -52,7 +52,7 @@ func main() {
 		asyncLogFlush(asyncLogShutdownTimeout)
 		os.Exit(1)
 	}
-	logSuccess("weibo-server 已就绪：http://%s（版本 %s）", addr, appVersion)
+	logSuccess("server 已就绪：http://%s（版本 %s）", addr, appVersion)
 
 	// 端口已就绪，登录态初始化放到后台，避免拖慢 C++ 的探测。
 	go client.Init()
@@ -80,7 +80,7 @@ func main() {
 		logError("优雅退出超时：%v", err)
 	}
 	asyncLogFlush(asyncLogShutdownTimeout)
-	logPlain("weibo-server 已退出")
+	logPlain("server 已退出")
 }
 
 // printBanner 打印启动横幅与路由清单。

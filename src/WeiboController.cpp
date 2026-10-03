@@ -4,7 +4,7 @@
 // QML 边界的唯一入口，包含三部分：
 //   1) WeiboController：全局登录态 / 详情快照 / 媒体 / 发布 / 超话签到状态，
 //      以及 10 个业务模块与全部列表模型的持有者；
-//   2) Go sidecar（weibo-server，127.0.0.1:8010）的同步 bring-up；
+//   2) Go sidecar（server，127.0.0.1:8010）的同步 bring-up；
 //   3) PenMods 插件三入口：init_plugin / attach_engine / destroy_plugin。
 //
 // 契约见 docs/SPEC.md：第 1 节（插件 ABI + 线程规则）、第 3 节（响应信封）、
@@ -49,9 +49,9 @@ namespace {
 
 // ---- Go sidecar 常量（与 docs/SPEC.md 第 1 / 3 节一致）----
 // 注意：kPluginRoot 自带结尾斜杠，拼接可执行文件名时不要再补 '/'，
-// 否则 pgrep -f 拿 "//weibo-server" 去匹配会漏掉以单斜杠路径启动的进程。
+// 否则 pgrep -f 拿 "//server" 去匹配会漏掉以单斜杠路径启动的进程。
 const QString kPluginRoot = QStringLiteral("/userdisk/PenMods/plugins/weibo_plugin/");
-const QString kServerExec = QStringLiteral("weibo-server");
+const QString kServerExec = QStringLiteral("server");
 const quint16 kServerPort = 8010;
 
 // 本插件自己拉起的 sidecar 进程。只有持有它时才由我们负责停止/销毁；

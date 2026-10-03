@@ -1057,11 +1057,74 @@ def check_blogcard_keys() -> None:
         )
 
 
+def ps1_files() -> list[str]:
+    out = []
+    for dirpath, dirnames, files in os.walk(ROOT):
+        dirnames[:] = [d for d in dirnames if d not in (".git", "build", "dist", "__pycache__")]
+        for name in files:
+            if name.lower().endswith(".ps1"):
+                out.append(os.path.join(dirpath, name))
+    return sorted(out)
+
+
+def fix_ps1_bom() -> int:
+    """给含非 ASCII 的 .ps1 加 UTF-8 BOM。
+
+    Windows PowerShell 5.1 读 .ps1 时如果**没有 BOM**，会按系统 ANSI 代码页
+    （简体中文机器上是 GBK）解码。UTF-8 的中文注释会被解成乱码，其中的字节
+    还可能凑成引号/花括号，直接导致 "Unexpected token" 之类的语法错误 ——
+    脚本根本跑不起来。加 BOM 后 5.1 会正确按 UTF-8 解析。
+    注意：绝对不能给 .sh 加 BOM，那会破坏 shebang。
+    """
+    changed = 0
+    for path in ps1_files():
+        raw = open(path, "rb").read()
+        if raw.startswith(b"\xef\xbb\xbf"):
+            continue
+        try:
+            text = raw.decode("utf-8")
+        except UnicodeDecodeError:
+            continue
+        if not any(ord(c) > 127 for c in text):
+            continue
+        with open(path, "wb") as fh:
+            fh.write(b"\xef\xbb\xbf" + raw)
+        print(f"  [fix ] 为 {rel(path)} 添加 UTF-8 BOM")
+        changed += 1
+    return changed
+
+
+def check_ps1_bom() -> None:
+    for path in ps1_files():
+        raw = open(path, "rb").read()
+        has_bom = raw.startswith(b"\xef\xbb\xbf")
+        try:
+            text = raw.decode("utf-8-sig")
+        except UnicodeDecodeError as exc:
+            err(f"Q: {rel(path)} 不是合法 UTF-8: {exc}")
+            continue
+        if any(ord(c) > 127 for c in text) and not has_bom:
+            err(
+                f"Q: {rel(path)} 含非 ASCII 但没有 UTF-8 BOM —— "
+                f"Windows PowerShell 5.1 会按 GBK 解析并报语法错误（跑 --fix 修复）"
+            )
+    # .sh 绝不能有 BOM（会破坏 shebang）
+    for dirpath, dirnames, files in os.walk(ROOT):
+        dirnames[:] = [d for d in dirnames if d not in (".git", "build", "dist", "__pycache__")]
+        for name in files:
+            if not name.endswith(".sh"):
+                continue
+            p = os.path.join(dirpath, name)
+            if open(p, "rb").read().startswith(b"\xef\xbb\xbf"):
+                err(f"Q: {rel(p)} 带了 UTF-8 BOM，会破坏 shebang（#!/bin/bash 会失效）")
+
+
 def main() -> int:
     fix = "--fix" in sys.argv
     print(f"校验根目录: {ROOT}" + ("  [--fix 模式]\n" if fix else "\n"))
     if fix:
         n = fix_qml_module()
+        n += fix_ps1_bom()
         print(f"  规范化了 {n} 处\n")
     check_metadata()
     check_pro()
@@ -1077,6 +1140,7 @@ def main() -> int:
     check_qml_cpp_api()
     check_qml_model_roles()
     check_blogcard_keys()
+    check_ps1_bom()
     check_workflow_yaml()
 
     for w in warnings:
