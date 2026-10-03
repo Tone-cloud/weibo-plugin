@@ -191,10 +191,13 @@ def check_misc(files) -> list[str]:
 def main() -> int:
     files = load()
     print(f"Go 文件: {len(files)} 个 —— {', '.join(sorted(files))}\n")
+    hard = check_unused_imports(files) + check_unused_locals(files)
     groups = [
-        ("未使用的 import", check_unused_imports(files)),
-        ("未使用的局部变量", check_unused_locals(files)),
-        ("标识符 / 重复定义", check_package_identifiers(files)),
+        # 这两类是**确定的编译错误**（Go 不允许未使用的 import / 局部变量），
+        # 所以有就直接退出码 1，CI 不用再去 grep 输出。
+        ("未使用的 import（编译错误）", check_unused_imports(files)),
+        ("未使用的局部变量（编译错误）", check_unused_locals(files)),
+        ("标识符 / 重复定义（需人工确认，可能含误报）", check_package_identifiers(files)),
         ("其它", check_misc(files)),
     ]
     total = 0
@@ -205,6 +208,10 @@ def main() -> int:
         total += len(items)
         print()
     print(f"合计 {total} 条待人工确认")
+
+    if hard:
+        print(f"\n有 {len(hard)} 条确定编译错误（未使用的 import / 局部变量）")
+        return 1
     return 0
 
 

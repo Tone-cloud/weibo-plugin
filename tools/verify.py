@@ -1199,6 +1199,66 @@ def check_lambda_this() -> None:
         err(f"S: {problem}")
 
 
+MOJIBAKE_EXTS = (".md", ".go", ".cpp", ".h", ".hpp", ".qml", ".js", ".ps1", ".sh",
+                 ".yml", ".json", ".pro", ".lua", ".py", ".txt")
+
+
+def _cjk_count(s: str) -> int:
+    return sum(1 for c in s if "\u4e00" <= c <= "\u9fff")
+
+
+def check_mojibake() -> None:
+    """侦测「UTF-8 被按 GBK 解码后又存成 UTF-8」的乱码。
+
+    真实踩过这个坑：用 Windows PowerShell 5.1 的 `Get-Content -Raw`（默认按系统
+    ANSI 代码页解码，简中机器上是 GBK）读一个 UTF-8 文件，再用
+    `Set-Content -Encoding UTF8` 写回去，中文就变成
+    「鏃犲伐鍏烽摼」这种乱码；更糟的是个别字节会丢成 `?`，足以让 shell 脚本的
+    引号不配对，CI 直接报 `unexpected EOF while looking for matching '`。
+
+    判定方式（两种，互补）：
+      1. 逐行做「gbk 编码 → utf-8 解码」往返。真中文的 GBK 字节几乎不可能
+         是合法 UTF-8（会解码失败），而乱码往返后一定变得更像中文。
+         逐行而不是整文件，是因为文件里只要有一个坏字节，整文件往返就会失败。
+      2. 出现 Unicode 私有使用区字符（U+E000–U+F8FF）。源码里出现这些字符
+         基本只可能是「有字节没有对应 GBK 码位、被替换掉」留下的残渣 ——
+         这一条专治上面往返检测漏掉的**有损**乱码（那种情况下还有 `?` 顶替，
+         往返会直接失败，检测不到）。
+    """
+    for dirpath, dirnames, files in os.walk(ROOT):
+        dirnames[:] = [d for d in dirnames if d not in (".git", "build", "dist", "__pycache__")]
+        for name in files:
+            if not name.endswith(MOJIBAKE_EXTS):
+                continue
+            path = os.path.join(dirpath, name)
+            try:
+                lines = read(path).split("\n")
+            except OSError:
+                continue
+            for lineno, line in enumerate(lines, 1):
+                # 2) 私有使用区残渣
+                pua = [c for c in line if "\ue000" <= c <= "\uf8ff"]
+                if pua:
+                    err(
+                        f"T: {rel(path)}:{lineno} 含 Unicode 私有使用区字符 "
+                        f"U+{ord(pua[0]):04X} —— 典型的「UTF-8 被按 GBK 解码」有损乱码"
+                        f"（注意：这种乱码还会吃掉换行，足以让 shell 引号不配对）"
+                    )
+                    continue
+                if not any(ord(c) > 0x2FFF for c in line):
+                    continue  # 纯 ASCII / 拉丁文，不可能是这种乱码
+                # 1) gbk → utf-8 往返
+                try:
+                    back = line.encode("gbk").decode("utf-8")
+                except (UnicodeEncodeError, UnicodeDecodeError):
+                    continue
+                if _cjk_count(back) > _cjk_count(line):
+                    err(
+                        f"T: {rel(path)}:{lineno} 疑似 GBK 乱码（UTF-8 被按 GBK 解码后再存）"
+                        f"，正确内容应类似: {back.strip()[:40]}"
+                    )
+
+
 def main() -> int:
     fix = "--fix" in sys.argv
     print(f"校验根目录: {ROOT}" + ("  [--fix 模式]\n" if fix else "\n"))
@@ -1223,6 +1283,7 @@ def main() -> int:
     check_ps1_bom()
     check_most_vexing_parse()
     check_lambda_this()
+    check_mojibake()
     check_workflow_yaml()
 
     for w in warnings:
