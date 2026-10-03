@@ -1,0 +1,45 @@
+# ---- build artifacts ----
+build/
+dist/
+*.o
+*.so
+*.a
+moc/
+obj/
+Makefile
+.qmake.stash
+*.log
+*.zip
+
+# ---- xmake ----
+.xmake/
+build/linux/
+
+# ---- go ----
+go_server/weibo-server
+go_server/server
+go_server/main/weibo-server
+/tmp/
+
+# ---- local state (DO NOT COMMIT: contains login cookies) ----
+cookies.json
+go_server/main/cookies.json
+**/cookies.json
+# cookies.example.json IS committed (documentation only, no real values)
+
+# ---- fonts (large, licensing) ----
+*.ttf
+*.ttc
+*.otf
+!qml/fonts/README.md
+
+# ---- python (tools/*.py) ----
+__pycache__/
+*.pyc
+
+# ---- editors / os ----
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp

@@ -1,0 +1,29 @@
+{
+  "cookies": [
+    {
+      "name": "SUB",
+      "value": "把这里替换成你浏览器里 m.weibo.cn 的 SUB Cookie 值",
+      "domain": ".weibo.com",
+      "path": "/"
+    },
+    {
+      "name": "SUBP",
+      "value": "把这里替换成你浏览器里 m.weibo.cn 的 SUBP Cookie 值",
+      "domain": ".weibo.com",
+      "path": "/"
+    },
+    {
+      "name": "XSRF-TOKEN",
+      "value": "把这里替换成 weibo.com 的 XSRF-TOKEN Cookie 值（发微博必须）",
+      "domain": ".weibo.com",
+      "path": "/"
+    },
+    {
+      "name": "SSOLoginState",
+      "value": "把这里替换成 weibo.com 的 SSOLoginState Cookie 值（可留空删除本项）",
+      "domain": ".weibo.com",
+      "path": "/"
+    }
+  ],
+  "updated_at": 0
+}

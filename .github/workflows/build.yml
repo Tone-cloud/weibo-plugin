@@ -1,0 +1,296 @@
+name: Build WeiboPocket Plugin
+
+on:
+  push:
+    branches: [main, master]
+    paths:
+      - 'src/**'
+      - 'qml/**'
+      - 'go_server/**'
+      - 'weibo_plugin.pro'
+      - 'xmake.lua'
+      - 'metadata.json'
+      - '.github/workflows/**'
+  pull_request:
+    paths:
+      - 'src/**'
+      - 'qml/**'
+      - 'go_server/**'
+      - 'weibo_plugin.pro'
+      - '.github/workflows/**'
+  workflow_dispatch:
+
+jobs:
+  # ------------------------------------------------------------------
+  # 0) 结构 / 契约静态校验（秒级，先跑，挡掉低级错误）
+  #    metadata ↔ 打包布局、qmldir ↔ 实际文件、.pro ↔ 源文件、
+  #    Q_INVOKABLE/Q_PROPERTY 定义、Go 只允许标准库、路由 ↔ SPEC 对齐。
+  # ------------------------------------------------------------------
+  verify:
+    name: Static contract check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Run tools/verify.py
+        run: python3 tools/verify.py
+
+      - name: Run tools/go_lint.py
+        run: |
+          # 无工具链时的 Go 兜底体检：未使用的 import / 未使用的局部变量 /
+          # 跨文件未定义标识符。真正的编译在 build-server job 里做。
+          python3 tools/go_lint.py | tee /tmp/golint.txt
+          if grep -q '^   调用了未定义的' /tmp/golint.txt; then
+            echo "FATAL: go_lint.py 发现未定义的调用"; exit 1
+          fi
+
+  # ------------------------------------------------------------------
+  # 1) 交叉编译 libweibo_plugin.so
+  #    环境与 Tone-cloud/netease-music 完全一致：
+  #      qt-5.15.2-for-aarch64-dictpen-linux
+  #      aarch64-dictpen-linux-gnu-gcc-toolchain
+  #      dictpen-libs
+  # ------------------------------------------------------------------
+  build-so:
+    name: Build libweibo_plugin.so (aarch64)
+    needs: [verify]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential git-lfs
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Clone Qt 5.15.2 for aarch64
+        run: git clone --depth 1 https://github.com/Lyrecoul/qt-5.15.2-for-aarch64-dictpen-linux.git
+
+      - name: Clone GCC toolchain
+        run: git clone --depth 1 https://github.com/Lyrecoul/aarch64-dictpen-linux-gnu-gcc-toolchain.git
+
+      - name: Clone dictpen-libs
+        run: git clone --depth 1 https://github.com/Lyrecoul/dictpen-libs.git
+
+      - name: Set up environment
+        run: |
+          echo "$PWD/qt-5.15.2-for-aarch64-dictpen-linux/bin" >> $GITHUB_PATH
+          echo "$PWD/aarch64-dictpen-linux-gnu-gcc-toolchain/bin" >> $GITHUB_PATH
+
+      - name: Verify environment
+        run: |
+          echo "=== workspace ==="
+          pwd; ls -d */ | head -20
+          echo "=== qmake version ==="
+          ./qt-5.15.2-for-aarch64-dictpen-linux/bin/qmake --version
+          echo "=== gcc version ==="
+          aarch64-dictpen-linux-gnu-g++ --version | head -1
+          echo "=== Qt include modules ==="
+          ls qt-5.15.2-for-aarch64-dictpen-linux/include/ | head -40
+          echo "=== QtQml exists? ==="
+          ls -d qt-5.15.2-for-aarch64-dictpen-linux/include/QtQml 2>/dev/null || echo "QtQml NOT FOUND"
+          echo "=== QtQuick exists? ==="
+          ls -d qt-5.15.2-for-aarch64-dictpen-linux/include/QtQuick 2>/dev/null || echo "QtQuick NOT FOUND"
+          echo "=== QtGui exists? ==="
+          ls -d qt-5.15.2-for-aarch64-dictpen-linux/include/QtGui 2>/dev/null || echo "QtGui NOT FOUND"
+          echo "=== Qt linkable .so symlinks (we link against these) ==="
+          ls -l qt-5.15.2-for-aarch64-dictpen-linux/lib/libQt5Qml.so \
+                qt-5.15.2-for-aarch64-dictpen-linux/lib/libQt5Quick.so \
+                qt-5.15.2-for-aarch64-dictpen-linux/lib/libQt5Gui.so \
+                qt-5.15.2-for-aarch64-dictpen-linux/lib/libQt5Network.so \
+                qt-5.15.2-for-aarch64-dictpen-linux/lib/libQt5Core.so 2>&1 | head -20
+          echo "=== dictpen mkspec ==="
+          ls qt-5.15.2-for-aarch64-dictpen-linux/mkspecs/dictpen/ 2>/dev/null || echo "dictpen mkspec NOT FOUND"
+          echo "=== dictpen-libs ==="
+          ls dictpen-libs/ 2>/dev/null || echo "dictpen-libs EMPTY"
+          echo "=== toolchain binutils (nm/strip/strings) ==="
+          for t in nm strip strings; do
+            command -v aarch64-dictpen-linux-gnu-$t >/dev/null 2>&1 \
+              && echo "aarch64-dictpen-linux-gnu-$t: OK" \
+              || echo "aarch64-dictpen-linux-gnu-$t: MISSING"
+          done
+
+      - name: Build with qmake
+        run: |
+          echo "=== Running qmake ==="
+          ./qt-5.15.2-for-aarch64-dictpen-linux/bin/qmake weibo_plugin.pro 2>&1 | tee qmake.log
+          QMAKE_EXIT=${PIPESTATUS[0]}
+          echo "=== qmake exit code: $QMAKE_EXIT ==="
+          if [ $QMAKE_EXIT -ne 0 ]; then
+            echo "=== qmake failed, full log ==="
+            cat qmake.log
+            exit 1
+          fi
+          echo "=== qmake done, running make ==="
+          make -j$(nproc) 2>&1 | tee make.log
+          MAKE_EXIT=${PIPESTATUS[0]}
+          echo "=== make exit code: $MAKE_EXIT ==="
+          if [ $MAKE_EXIT -ne 0 ]; then
+            echo "=== make failed, last 120 lines ==="
+            tail -120 make.log
+            exit 1
+          fi
+          echo "=== make done ==="
+          ls -lh build/
+
+      - name: Verify exported plugin ABI
+        run: |
+          set -euo pipefail
+          SO=build/libweibo_plugin.so
+          test -f "$SO"
+          echo "=== file ==="; file "$SO"
+          echo "=== exported PenMods entry points ==="
+          if command -v aarch64-dictpen-linux-gnu-nm >/dev/null 2>&1; then
+            aarch64-dictpen-linux-gnu-nm -D --defined-only "$SO" \
+              | tee /tmp/syms.txt \
+              | grep -E 'init_plugin|attach_engine|destroy_plugin'
+          else
+            echo "toolchain nm 不存在，回落到 strings"
+            strings "$SO" | grep -xE 'init_plugin|attach_engine|destroy_plugin' | tee /tmp/syms.txt
+          fi
+          for sym in init_plugin attach_engine destroy_plugin; do
+            grep -q "$sym" /tmp/syms.txt || { echo "FATAL: $sym 未导出"; exit 1; }
+          done
+          echo "=== qml entry present in package? ==="
+          test -f qml/main.qml && echo "qml/main.qml OK"
+
+      - name: Strip debug symbols
+        run: |
+          aarch64-dictpen-linux-gnu-strip --strip-unneeded build/libweibo_plugin.so
+          ls -lh build/libweibo_plugin.so
+
+      - name: Upload libweibo_plugin.so
+        uses: actions/upload-artifact@v4
+        with:
+          name: libweibo_plugin
+          path: build/libweibo_plugin.so
+          if-no-files-found: error
+
+  # ------------------------------------------------------------------
+  # 2) 编译 Go sidecar（weibo-server, linux/arm64, 纯静态）
+  # ------------------------------------------------------------------
+  build-server:
+    name: Build Go sidecar (linux/arm64)
+    needs: [verify]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache-dependency-path: go_server/main/go.sum
+
+      - name: Verify no third-party dependencies
+        working-directory: go_server/main
+        run: |
+          go mod tidy
+          if [ -s go.sum ]; then
+            echo "go.sum is not empty — third-party deps are not allowed:"; cat go.sum; exit 1
+          fi
+          go vet ./...
+
+      - name: Build weibo-server
+        working-directory: go_server/main
+        run: |
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 \
+            go build -trimpath -ldflags="-s -w" -o ../weibo-server .
+          ls -lh ../weibo-server
+          file ../weibo-server
+
+      - name: Smoke test (build for host and hit /server/ping)
+        working-directory: go_server/main
+        run: |
+          CGO_ENABLED=0 GOOS=linux GOARCH=$(go env GOARCH) go build -o /tmp/weibo-server-host .
+          PORT=18010 /tmp/weibo-server-host > /tmp/server.log 2>&1 &
+          SRV=$!
+          for i in $(seq 1 40); do
+            if curl -sf http://127.0.0.1:18010/server/ping > /tmp/ping.json; then break; fi
+            sleep 0.25
+          done
+          echo "--- /server/ping ---"; cat /tmp/ping.json || true
+          curl -sf http://127.0.0.1:18010/ | head -20 || true
+          kill $SRV 2>/dev/null || true
+          grep -q '"ok":true' /tmp/ping.json || { echo "ping failed"; cat /tmp/server.log; exit 1; }
+
+      - name: Upload weibo-server
+        uses: actions/upload-artifact@v4
+        with:
+          name: weibo-server
+          path: go_server/weibo-server
+          if-no-files-found: error
+
+  # ------------------------------------------------------------------
+  # 3) 打包成可直接解压到设备的 weibo_plugin.zip
+  # ------------------------------------------------------------------
+  package:
+    name: Package weibo_plugin.zip
+    needs: [build-so, build-server]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download libweibo_plugin.so
+        uses: actions/download-artifact@v4
+        with:
+          name: libweibo_plugin
+          path: build
+
+      - name: Download weibo-server
+        uses: actions/download-artifact@v4
+        with:
+          name: weibo-server
+          path: go_server
+
+      - name: Assemble plugin directory
+        run: |
+          set -euo pipefail
+          mkdir -p dist/weibo_plugin
+          cp build/libweibo_plugin.so dist/weibo_plugin/
+          cp go_server/weibo-server      dist/weibo_plugin/
+          chmod +x dist/weibo_plugin/weibo-server
+          cp -r qml                       dist/weibo_plugin/qml
+          cp metadata.json icon.png       dist/weibo_plugin/
+          echo "=== plugin tree ==="
+          find dist/weibo_plugin -maxdepth 2 | sort | head -40
+
+      - name: Validate package layout
+        run: |
+          set -euo pipefail
+          test -f dist/weibo_plugin/libweibo_plugin.so
+          test -f dist/weibo_plugin/weibo-server
+          test -f dist/weibo_plugin/qml/main.qml
+          test -f dist/weibo_plugin/metadata.json
+          test -f dist/weibo_plugin/icon.png
+          # metadata.json 的 main_qml / main_so 必须真实存在
+          python3 - <<'PY'
+          import json, os, sys
+          meta = json.load(open('dist/weibo_plugin/metadata.json', encoding='utf-8'))
+          root = 'dist/weibo_plugin'
+          for key in ('main_qml', 'main_so'):
+              p = os.path.join(root, meta[key])
+              if not os.path.exists(p):
+                  sys.exit(f'metadata.json {key} -> {p} missing')
+              print(f'OK {key}: {meta[key]}')
+          print('OK id:', meta['id'])
+          PY
+
+      - name: Create zip
+        run: |
+          cd dist
+          zip -r ../weibo_plugin.zip weibo_plugin
+          cd ..
+          ls -lh weibo_plugin.zip
+          unzip -l weibo_plugin.zip | head -30
+
+      - name: Upload weibo_plugin.zip
+        uses: actions/upload-artifact@v4
+        with:
+          name: weibo_plugin-zip
+          path: weibo_plugin.zip
+          if-no-files-found: error
